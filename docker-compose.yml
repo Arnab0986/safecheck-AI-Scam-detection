@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: safecheck-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: safecheck
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: safecheck-backend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGO_URI: mongodb://mongo:27017/safecheck
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      CASHFREE_APP_ID: ${CASHFREE_APP_ID:-test}
+      CASHFREE_SECRET: ${CASHFREE_SECRET:-test}
+      CASHFREE_MODE: ${CASHFREE_MODE:-TEST}
+      MOCK_CASHFREE: ${MOCK_CASHFREE:-true}
+      OCR_TMP_DIR: /tmp/ocr
+      ALLOWED_ORIGINS: http://frontend:3000,http://localhost:5173
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ocr_temp:/tmp/ocr
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', (r) => {if(r.statusCode===200)process.exit(0);process.exit(1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build: ./frontend
+    container_name: safecheck-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_BASE_URL: http://localhost:4000/api/v1
+      VITE_CASHFREE_APP_ID: ${CASHFREE_APP_ID:-test}
+      VITE_CASHFREE_MODE: ${CASHFREE_MODE:-TEST}
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => {if(r.statusCode===200)process.exit(0);process.exit(1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mongo_data:
+  ocr_temp:
