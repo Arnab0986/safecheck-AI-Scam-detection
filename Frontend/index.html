@@ -4,26 +4,32 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="SafeCheck - AI-powered scam detection for text, URLs, job offers, and invoices">
-    <meta name="keywords" content="scam detection, AI security, fraud prevention, OCR invoice">
+    <meta name="description" content="SafeCheck - AI-powered scam detection for text, URLs, job offers, and invoices" />
+    <meta name="keywords" content="scam detection, AI security, fraud prevention, OCR invoice" />
     <title>SafeCheck - Scam Detection Platform</title>
+
+    <!-- Fonts (optional) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
+      /* minimal fallback styles so page isn't completely blank while React mounts */
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body, #root { height: 100%; }
       body {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
         overflow-x: hidden;
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/App.jsx"></script>
+
+    <!-- IMPORTANT: point to your main entry where ReactDOM.createRoot is called -->
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
