@@ -1,5 +1,6 @@
 require('express-async-errors');
 require('dotenv').config();
+
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -8,6 +9,7 @@ const mongoose = require('mongoose');
 const morgan = require('morgan');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
+
 const logger = require('./utils/logger');
 const errorMiddleware = require('./middleware/error.middleware');
 
@@ -20,11 +22,15 @@ const ocrRoutes = require('./routes/ocr.routes');
 const app = express();
 app.set('trust proxy', 1);
 
-// Body parser
+// ------------------------------------
+// Body Parser
+// ------------------------------------
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// FIXED: Helmet CSP relaxed (Render blocks strict CSP)
+// ------------------------------------
+// Helmet (security) - CSP disabled for Render
+// ------------------------------------
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -32,36 +38,29 @@ app.use(
   })
 );
 
-/*  
----------------------------------------------
-🔥 FIXED CORS (important)
----------------------------------------------
-Render backend must allow:
-- Its own health checks
-- Postman / mobile apps (no Origin header)
-- Future frontend domain (you haven't deployed yet)
----------------------------------------------
-*/
+// ------------------------------------
+// Dynamic CORS Handling
+// ------------------------------------
 const allowedOrigins =
   process.env.ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || [];
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, Render health checks)
-      if (!origin) return callback(null, true);
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // Allow mobile apps, Postman, render health checks
 
-      // Allow any domain in ALLOWED_ORIGINS
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
 
       console.log("❌ CORS blocked:", origin);
-      return callback(new Error("Not allowed by CORS"));
+      return cb(new Error("Not allowed by CORS"));
     },
     credentials: true,
   })
 );
 
-// Rate limiting
+// ------------------------------------
+// Rate Limiting
+// ------------------------------------
 app.use(
   '/api/',
   rateLimit({
@@ -74,14 +73,18 @@ app.use(
   })
 );
 
-// Logger
+// ------------------------------------
+// Logger (Morgan + Winston)
+// ------------------------------------
 app.use(
   morgan('combined', {
     stream: { write: (msg) => logger.info(msg.trim()) },
   })
 );
 
-// Swagger
+// ------------------------------------
+// Swagger API Documentation
+// ------------------------------------
 const swaggerSpec = swaggerJsdoc({
   definition: {
     openapi: '3.0.0',
@@ -93,9 +96,12 @@ const swaggerSpec = swaggerJsdoc({
   },
   apis: ['./src/routes/*.js'],
 });
+
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// Health check
+// ------------------------------------
+// Health Check Endpoint
+// ------------------------------------
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
@@ -104,25 +110,29 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Routes
+// ------------------------------------
+// Main API Routes
+// ------------------------------------
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/scan', scanRoutes);
 app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/ocr', ocrRoutes);
 
-// Not found
+// ------------------------------------
+// Not Found Handler
+// ------------------------------------
 app.use('*', (req, res) => {
   res.status(404).json({ success: false, error: 'Endpoint not found' });
 });
 
-// Error handler
+// ------------------------------------
+// Global Error Handler
+// ------------------------------------
 app.use(errorMiddleware);
 
-/*
---------------------------------------------------
-🔥 MONGODB CONNECTION (Your URL works here)
---------------------------------------------------
-*/
+// ------------------------------------
+// MongoDB Connection
+// ------------------------------------
 mongoose
   .connect(process.env.MONGO_URI, {
     serverSelectionTimeoutMS: 5000,
@@ -133,10 +143,10 @@ mongoose
     process.exit(1);
   });
 
-// Start server
+// ------------------------------------
+// Start Server
+// ------------------------------------
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () =>
-  logger.info(`Server running on port ${PORT}`)
-);
+app.listen(PORT, () => logger.info(`Server running on port ${PORT}`));
 
 module.exports = app;
