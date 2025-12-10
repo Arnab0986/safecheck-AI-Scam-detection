@@ -1,63 +1,37 @@
 {
   "name": "safecheck-backend",
   "version": "1.0.0",
-  "description": "Backend API for SafeCheck scam detection platform",
+  "description": "SafeCheck Backend - Scam Detection API",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js",
-    "test": "jest --coverage",
-    "test:unit": "jest --testPathPattern=unit",
-    "test:integration": "jest --testPathPattern=integration",
-    "test:watch": "jest --watch",
-    "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix"
+    "dev": "nodemon src/app.js"
   },
+  "keywords": ["scam-detection", "ai", "ocr", "security"],
+  "author": "SafeCheck Team",
+  "license": "UNLICENSED",
   "dependencies": {
     "express": "^4.18.2",
-    "mongoose": "^7.6.0",
+    "mongoose": "^7.5.0",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "dotenv": "^16.3.1",
-    "helmet": "^7.0.0",
     "cors": "^2.8.5",
+    "helmet": "^7.0.0",
     "express-rate-limit": "^6.10.0",
-    "joi": "^17.11.0",
+    "joi": "^17.9.2",
     "multer": "^1.4.5-lts.1",
-    "axios": "^1.6.0",
+    "winston": "^3.10.0",
+    "axios": "^1.5.0",
+    "openai": "^4.4.0",
     "tesseract.js": "^5.0.4",
-    "sharp": "^0.33.1",
-    "winston": "^3.11.0",
-    "express-async-errors": "^3.1.1",
-    "morgan": "^1.10.0",
-    "swagger-ui-express": "^5.0.0",
-    "swagger-jsdoc": "^6.2.8"
+    "sharp": "^0.32.6",
+    "fs-extra": "^11.1.1"
   },
   "devDependencies": {
-    "jest": "^29.7.0",
-    "supertest": "^6.3.3",
-    "nodemon": "^3.0.1",
-    "eslint": "^8.53.0",
-    "@types/jest": "^29.5.8"
+    "nodemon": "^3.0.1"
   },
-  "jest": {
-    "testEnvironment": "node",
-    "coveragePathIgnorePatterns": [
-      "/node_modules/",
-      "/tests/"
-    ],
-    "collectCoverageFrom": [
-      "src/**/*.js",
-      "!src/app.js"
-    ]
-  },
-  "keywords": [
-    "scam-detection",
-    "ai",
-    "security",
-    "ocr",
-    "payment"
-  ],
-  "author": "SafeCheck Team",
-  "license": "Proprietary"
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

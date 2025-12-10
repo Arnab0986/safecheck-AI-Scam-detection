@@ -2,67 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SafeCheck - AI-Powered Scam Detection</title>
-    <meta name="description" content="Detect scams in text, URLs, job offers, and images with AI-powered analysis">
-    <meta name="keywords" content="scam detection, AI security, fraud prevention, OCR scanning, safe browsing">
-    
-    <!-- Open Graph / Facebook -->
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://safecheck.example.com/">
-    <meta property="og:title" content="SafeCheck - AI-Powered Scam Detection">
-    <meta property="og:description" content="Detect scams in text, URLs, job offers, and images with AI-powered analysis">
-    <meta property="og:image" content="https://safecheck.example.com/og-image.png">
-    
-    <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image">
-    <meta property="twitter:url" content="https://safecheck.example.com/">
-    <meta property="twitter:title" content="SafeCheck - AI-Powered Scam Detection">
-    <meta property="twitter:description" content="Detect scams in text, URLs, job offers, and images with AI-powered analysis">
-    <meta property="twitter:image" content="https://safecheck.example.com/og-image.png">
-    
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Cashfree SDK -->
-    <script src="https://sdk.cashfree.com/js/v3/cashfree.js"></script>
-    
+    <meta name="description" content="SafeCheck - AI-powered scam detection for text, URLs, job offers, and invoices">
+    <meta name="keywords" content="scam detection, AI security, fraud prevention, OCR invoice">
+    <title>SafeCheck - Scam Detection Platform</title>
     <style>
-      /* Loading animation */
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
       }
-      
-      .loading {
-        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-      }
-      
-      /* Custom scrollbar */
-      ::-webkit-scrollbar {
-        width: 10px;
-      }
-      
-      ::-webkit-scrollbar-track {
-        background: #f1f5f9;
-        border-radius: 5px;
-      }
-      
-      ::-webkit-scrollbar-thumb {
-        background: #94a3b8;
-        border-radius: 5px;
-      }
-      
-      ::-webkit-scrollbar-thumb:hover {
-        background: #64748b;
+      body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        overflow-x: hidden;
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script type="module" src="/src/App.jsx"></script>
   </body>
 </html>

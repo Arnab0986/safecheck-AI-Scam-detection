@@ -1,30 +1,31 @@
-# 🛡️ SafeCheck - AI-Powered Scam Detection Platform
+# SafeCheck - Scam Detection Platform
 
-![SafeCheck Logo](https://img.shields.io/badge/SafeCheck-Production%20Ready-green)
-![Docker](https://img.shields.io/badge/Docker-Containers-blue)
-![React](https://img.shields.io/badge/React-18.2-blue)
-![Node.js](https://img.shields.io/badge/Node.js-20.x-green)
+SafeCheck is a production-ready scam detection platform that analyzes text, URLs, job offers, and invoice images using AI and heuristics.
 
-SafeCheck is a comprehensive scam detection platform that analyzes text, URLs, job offers, and images (via OCR) using AI-powered detection algorithms with heuristic fallback systems.
+## Features
+- **AI-Powered Detection**: OpenAI GPT-based scam analysis
+- **Heuristic Fallback**: Rule-based scoring when AI is unavailable
+- **OCR Invoice Analysis**: Extract and analyze text from invoice images
+- **Job Offer Verification**: Detect fraudulent job postings
+- **URL Safety Check**: Analyze URLs for phishing/scams
+- **Subscription System**: Cashfree payment integration
+- **Modern 3D UI**: Animated React interface with TailwindCSS
 
-## ✨ Features
+## Tech Stack
+**Backend**: Node.js, Express, MongoDB, Tesseract.js, OpenAI API
+**Frontend**: React 18, Vite, TailwindCSS, Context API
+**DevOps**: Docker, Docker Compose, Render, Vercel
 
-- **Multi-Format Detection**: Text, URLs, job offers, and image OCR
-- **AI-Powered Analysis**: OpenAI GPT-4 integration for intelligent detection
-- **Heuristic Fallback**: Rule-based engine when AI is unavailable
-- **Real-time Scanning**: Instant risk assessment with detailed reports
-- **Secure Authentication**: JWT-based user authentication
-- **Subscription Payments**: Integrated Cashfree payment gateway
-- **Modern 3D UI**: Beautiful glassmorphism design with animations
-- **Docker Support**: Full containerization for easy deployment
+## Quick Start
+```bash
+# Clone and setup
+git clone <repository>
+cd safecheck-app
 
-## 🏗️ Architecture
-┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-│ React │────▶│ Express │────▶│ MongoDB │
-│ Frontend │ │ Backend │ │ Database │
-└─────────────┘ └─────────────┘ └─────────────┘
-│
-┌────┴─────┐
-│ OpenAI │
-│ Cashfree │
-└──────────┘
+# Start with Docker Compose
+docker-compose up --build
+
+# Access the application
+Frontend: http://localhost:5173
+Backend: http://localhost:4000
+API Docs: http://localhost:4000/api-docs

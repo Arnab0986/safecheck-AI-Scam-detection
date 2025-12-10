@@ -1,289 +1,241 @@
-const axios = require('axios');
+const OpenAI = require('openai');
 const logger = require('../utils/logger');
 
 class ScamDetectorService {
   constructor() {
-    this.openaiApiKey = process.env.OPENAI_API_KEY;
-    this.openaiModel = process.env.OPENAI_MODEL || 'gpt-4';
-    this.openaiUrl = 'https://api.openai.com/v1/chat/completions';
+    this.openai = process.env.OPENAI_API_KEY ? new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    }) : null;
   }
 
-  /**
-   * Analyze text for scams using OpenAI with heuristic fallback
-   */
-  async analyzeText(text, type = 'text') {
+  async analyzeText(text) {
     try {
       // Try OpenAI first
-      if (this.openaiApiKey && this.openaiApiKey !== 'your_openai_api_key_here') {
-        const aiResult = await this.analyzeWithAI(text, type);
-        if (aiResult) {
-          logger.info(`AI analysis successful for ${type}`);
-          return aiResult;
-        }
+      if (this.openai) {
+        const aiResult = await this.analyzeWithAI(text, 'general text');
+        if (aiResult) return aiResult;
       }
-      
-      // Fallback to heuristic engine
-      logger.info(`Using heuristic engine for ${type}`);
-      return this.analyzeWithHeuristics(text, type);
+
+      // Fallback to heuristic analysis
+      return this.heuristicAnalysis(text, 'text');
     } catch (error) {
-      logger.error('Scam detection error:', error);
-      return this.analyzeWithHeuristics(text, type);
+      logger.error(`AI analysis failed: ${error.message}`);
+      return this.heuristicAnalysis(text, 'text');
     }
   }
 
-  /**
-   * Analyze text using OpenAI
-   */
-  async analyzeWithAI(text, type) {
-    const systemPrompt = this.getSystemPrompt(type);
-    const userPrompt = this.getUserPrompt(text, type);
+  async analyzeUrl(url) {
+    try {
+      // Try OpenAI first
+      if (this.openai) {
+        const aiResult = await this.analyzeWithAI(url, 'url');
+        if (aiResult) return aiResult;
+      }
+
+      // Fallback to heuristic analysis
+      return this.heuristicAnalysis(url, 'url');
+    } catch (error) {
+      logger.error(`URL analysis failed: ${error.message}`);
+      return this.heuristicAnalysis(url, 'url');
+    }
+  }
+
+  async analyzeJobOffer(jobText) {
+    try {
+      // Try OpenAI first
+      if (this.openai) {
+        const aiResult = await this.analyzeWithAI(jobText, 'job offer');
+        if (aiResult) return aiResult;
+      }
+
+      // Fallback to heuristic analysis
+      return this.heuristicAnalysis(jobText, 'job');
+    } catch (error) {
+      logger.error(`Job analysis failed: ${error.message}`);
+      return this.heuristicAnalysis(jobText, 'job');
+    }
+  }
+
+  async analyzeInvoice(invoiceText) {
+    try {
+      // Try OpenAI first
+      if (this.openai) {
+        const aiResult = await this.analyzeWithAI(invoiceText, 'invoice');
+        if (aiResult) return aiResult;
+      }
+
+      // Fallback to heuristic analysis
+      return this.heuristicAnalysis(invoiceText, 'invoice');
+    } catch (error) {
+      logger.error(`Invoice analysis failed: ${error.message}`);
+      return this.heuristicAnalysis(invoiceText, 'invoice');
+    }
+  }
+
+  async analyzeWithAI(content, type) {
+    if (!this.openai) return null;
 
     try {
-      const response = await axios.post(
-        this.openaiUrl,
-        {
-          model: this.openaiModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.3,
-          max_tokens: 500,
-          response_format: { type: "json_object" }
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.openaiApiKey}`,
-            'Content-Type': 'application/json'
+      const prompt = this.getPromptForType(content, type);
+      
+      const response = await this.openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          {
+            role: "system",
+            content: "You are a scam detection expert. Analyze the provided content and determine if it's a scam. Provide a score from 0-100 (0 = completely safe, 100 = definitely a scam), a level (safe, suspicious, dangerous), and a detailed explanation."
           },
-          timeout: 10000 // 10 second timeout
-        }
-      );
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 500
+      });
 
-      const result = JSON.parse(response.data.choices[0].message.content);
-      return this.formatAIResult(result, type);
+      const resultText = response.choices[0].message.content;
+      return this.parseAIResponse(resultText);
+
     } catch (error) {
-      logger.error('OpenAI API error:', error.message);
+      logger.error(`OpenAI API error: ${error.message}`);
       return null;
     }
   }
 
-  /**
-   * Analyze text using heuristic rules
-   */
-  analyzeWithHeuristics(text, type) {
-    const lowerText = text.toLowerCase();
-    let riskScore = 0;
-    const indicators = [];
-    const recommendations = [];
+  getPromptForType(content, type) {
+    const prompts = {
+      text: `Analyze this text for potential scams, fraud, or malicious intent:\n\n${content}\n\nProvide analysis in this exact JSON format: {"score": number, "level": "safe"|"suspicious"|"dangerous", "explanation": "detailed explanation", "detectedIssues": ["issue1", "issue2"], "confidence": number}`,
+      url: `Analyze this URL for potential phishing, scams, or security threats:\n\n${content}\n\nLook for: suspicious domains, typosquatting, shortened URLs, etc. Provide analysis in this exact JSON format: {"score": number, "level": "safe"|"suspicious"|"dangerous", "explanation": "detailed explanation", "detectedIssues": ["issue1", "issue2"], "confidence": number}`,
+      job: `Analyze this job offer for potential scams or fraudulent activity:\n\n${content}\n\nLook for: upfront payments, personal information requests, too-good-to-be-true salaries, etc. Provide analysis in this exact JSON format: {"score": number, "level": "safe"|"suspicious"|"dangerous", "explanation": "detailed explanation", "detectedIssues": ["issue1", "issue2"], "confidence": number}`,
+      invoice: `Analyze this invoice text for potential scams or fraudulent billing:\n\n${content}\n\nLook for: unusual payment methods, pressure tactics, mismatched details, etc. Provide analysis in this exact JSON format: {"score": number, "level": "safe"|"suspicious"|"dangerous", "explanation": "detailed explanation", "detectedIssues": ["issue1", "issue2"], "confidence": number}`
+    };
+
+    return prompts[type] || prompts.text;
+  }
+
+  parseAIResponse(responseText) {
+    try {
+      // Try to find JSON in the response
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          score: Math.min(100, Math.max(0, parsed.score || 50)),
+          level: this.getLevelFromScore(parsed.score || 50),
+          explanation: parsed.explanation || 'AI analysis completed',
+          detectedIssues: parsed.detectedIssues || [],
+          confidence: Math.min(100, Math.max(0, parsed.confidence || 80))
+        };
+      }
+    } catch (error) {
+      logger.error(`Failed to parse AI response: ${error.message}`);
+    }
+
+    // Default fallback
+    return {
+      score: 50,
+      level: 'suspicious',
+      explanation: 'AI analysis returned unexpected format',
+      detectedIssues: ['Analysis format error'],
+      confidence: 50
+    };
+  }
+
+  heuristicAnalysis(content, type) {
+    let score = 0;
+    const issues = [];
+    
+    content = content.toLowerCase();
     
     // Common scam indicators
-    const scamPatterns = {
-      urgency: ['urgent', 'immediately', 'right away', 'limited time', 'act now'],
-      financial: ['money', 'payment', 'bank', 'account', 'transfer', 'bitcoin', 'crypto'],
-      reward: ['won', 'prize', 'reward', 'free', 'gift', 'lottery'],
-      threat: ['suspended', 'closed', 'legal action', 'police', 'court'],
-      personal: ['password', 'login', 'credentials', 'social security', 'aadhaar'],
-      suspicious: ['click here', 'verify', 'confirm', 'update', 'security alert']
-    };
-
-    // Type-specific patterns
-    const typePatterns = {
-      url: ['bit.ly', 'tinyurl', 'shortener', 'http://', 'https://', 'www.'],
-      job_offer: ['work from home', 'no experience', 'high salary', 'quick money'],
-      invoice: ['invoice', 'payment due', 'overdue', 'account payable', 'remittance']
-    };
-
-    // Calculate risk score based on patterns
-    Object.entries(scamPatterns).forEach(([category, patterns]) => {
-      patterns.forEach(pattern => {
-        if (lowerText.includes(pattern)) {
-          riskScore += 5;
-          indicators.push(`${category}: contains "${pattern}"`);
-        }
-      });
-    });
-
-    // Add type-specific patterns
-    if (typePatterns[type]) {
-      typePatterns[type].forEach(pattern => {
-        if (lowerText.includes(pattern)) {
-          riskScore += 7;
-          indicators.push(`type_specific: contains "${pattern}"`);
-        }
-      });
-    }
-
-    // Check for suspicious URL patterns
+    const scamIndicators = [
+      { pattern: /\b(wire.*transfer|western union|moneygram)\b/i, weight: 20 },
+      { pattern: /\b(urgent|immediate|act now|limited time)\b/i, weight: 15 },
+      { pattern: /\b(free.*gift|free.*prize|you.*won)\b/i, weight: 20 },
+      { pattern: /\b(personal.*information|social.*security|credit.*card)\b/i, weight: 25 },
+      { pattern: /\b(payment.*upfront|advance.*fee|processing.*fee)\b/i, weight: 30 },
+      { pattern: /\b(click.*here|verify.*account|update.*information)\b/i, weight: 15 },
+      { pattern: /\b(nigerian.*prince|inheritance|lottery)\b/i, weight: 40 },
+      { pattern: /\b(password|login|credentials)\b/i, weight: 20 },
+      { pattern: /bitcoin|crypto|ethereum/i, weight: 10 },
+      { pattern: /\b(guaranteed.*profit|risk.*free|high.*return)\b/i, weight: 25 }
+    ];
+    
+    // URL-specific indicators
     if (type === 'url') {
-      const urlRegex = /https?:\/\/([^\/]+)/i;
-      const match = text.match(urlRegex);
-      if (match) {
-        const domain = match[1];
-        const suspiciousDomains = [
-          'free', 'win', 'prize', 'reward', 'bank', 'secure', 'update',
-          'verify', 'login', 'account', 'payment'
-        ];
-        
-        suspiciousDomains.forEach(keyword => {
-          if (domain.includes(keyword)) {
-            riskScore += 10;
-            indicators.push(`suspicious_domain: contains "${keyword}"`);
-          }
-        });
-
-        // Check for domain age indicators (new domains)
-        if (domain.includes('xyz') || domain.includes('top') || domain.includes('club')) {
-          riskScore += 5;
-          indicators.push('new_tld: uses new TLD');
-        }
-      }
-    }
-
-    // Check for job scam patterns
-    if (type === 'job_offer') {
-      const jobScamIndicators = [
-        'no experience needed',
-        'earn money fast',
-        'work from anywhere',
-        'simple job',
-        'high commission'
+      const urlIndicators = [
+        { pattern: /(http:\/\/|https:\/\/).*@/, weight: 30 }, // Embedded credentials
+        { pattern: /\.(xyz|top|club|gq|ml|tk|cf|ga)\b/, weight: 10 }, // Suspicious TLDs
+        { pattern: /(bit\.ly|goo\.gl|tinyurl|ow\.ly)/, weight: 15 }, // URL shorteners
+        { pattern: /(paypal|bank|amazon|microsoft).*\.(com-|net-|org-)/, weight: 35 }, // Typosquatting
+        { pattern: /(login|signin|verify|secure)\./, weight: 20 }, // Fake login pages
+        { pattern: /\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/, weight: 25 } // IP addresses
       ];
-
-      jobScamIndicators.forEach(indicator => {
-        if (lowerText.includes(indicator)) {
-          riskScore += 8;
-          indicators.push(`job_scam: contains "${indicator}"`);
-        }
-      });
+      scamIndicators.push(...urlIndicators);
     }
-
-    // Check for invoice scam patterns
+    
+    // Job offer indicators
+    if (type === 'job') {
+      const jobIndicators = [
+        { pattern: /\b(work.*from.*home|earn.*big|no.*experience)\b/i, weight: 15 },
+        { pattern: /\b(commission.*only|pay.*per.*click)\b/i, weight: 20 },
+        { pattern: /\b(envelope.*stuffing|data.*entry|mystery.*shopper)\b/i, weight: 25 },
+        { pattern: /\b(training.*fee|equipment.*fee|background.*check)\b/i, weight: 30 },
+        { pattern: /\b(salary.*[\$\£\€]\s*[0-9,]+\s*per\s*(month|week|day))/i, weight: 10 }
+      ];
+      scamIndicators.push(...jobIndicators);
+    }
+    
+    // Invoice indicators
     if (type === 'invoice') {
-      const invoiceScamIndicators = [
-        'payment overdue',
-        'immediate payment',
-        'account suspended',
-        'late fee',
-        'urgent attention'
+      const invoiceIndicators = [
+        { pattern: /\b(wire.*payment|direct.*deposit|urgent.*payment)\b/i, weight: 25 },
+        { pattern: /\b(overdue|final.*notice|legal.*action)\b/i, weight: 20 },
+        { pattern: /\b(tax.*id|vat|ein)\b/i, weight: 15 },
+        { pattern: /\b(account.*number|routing.*number|swift.*code)\b/i, weight: 30 },
+        { pattern: /\b(payment.*due.*immediately|late.*fee)\b/i, weight: 25 }
       ];
-
-      invoiceScamIndicators.forEach(indicator => {
-        if (lowerText.includes(indicator)) {
-          riskScore += 9;
-          indicators.push(`invoice_scam: contains "${indicator}"`);
-        }
-      });
+      scamIndicators.push(...invoiceIndicators);
     }
-
-    // Calculate length-based risk (too short might be suspicious)
-    if (text.length < 20) {
-      riskScore += 15;
-      indicators.push('suspicious_length: text is very short');
-    }
-
-    // Cap risk score at 100
-    riskScore = Math.min(100, riskScore);
-
-    // Generate recommendations based on risk
-    if (riskScore >= 80) {
-      recommendations.push('This appears to be highly suspicious. Avoid any interaction.');
-      recommendations.push('Do not click any links or provide personal information.');
-      recommendations.push('Report to authorities if financial loss has occurred.');
-    } else if (riskScore >= 60) {
-      recommendations.push('Exercise extreme caution with this content.');
-      recommendations.push('Verify the source through official channels.');
-      recommendations.push('Do not make any payments without verification.');
-    } else if (riskScore >= 40) {
-      recommendations.push('Be cautious and verify the information.');
-      recommendations.push('Check the sender\'s identity through other means.');
-    } else if (riskScore >= 20) {
-      recommendations.push('This appears mostly safe but stay vigilant.');
-    } else {
-      recommendations.push('This content appears to be safe.');
-    }
-
-    // Determine category
-    let category = 'safe';
-    if (riskScore >= 80) category = 'fraud';
-    else if (riskScore >= 60) category = 'phishing';
-    else if (riskScore >= 40) category = 'suspicious';
-    else if (riskScore >= 20) category = 'low_risk';
-
+    
+    // Calculate score based on indicators
+    scamIndicators.forEach(indicator => {
+      if (indicator.pattern.test(content)) {
+        score += indicator.weight;
+        issues.push(`Detected: ${indicator.pattern.toString()}`);
+      }
+    });
+    
+    // Length-based scoring (very short or very long content might be suspicious)
+    if (content.length < 20) score += 20;
+    if (content.length > 5000) score += 15;
+    
+    // Cap score at 100
+    score = Math.min(100, Math.max(0, score));
+    
     return {
-      isScam: riskScore >= 60,
-      confidence: riskScore / 100,
-      category,
-      riskScore,
-      explanation: this.generateExplanation(riskScore, indicators, type),
-      indicators: indicators.slice(0, 10), // Limit to 10 indicators
-      recommendations,
-      detectionMethod: 'heuristic'
+      score,
+      level: this.getLevelFromScore(score),
+      explanation: this.getExplanationFromScore(score, type),
+      detectedIssues: issues.slice(0, 5), // Limit to 5 issues
+      confidence: Math.max(30, 100 - Math.abs(score - 50) * 0.8) // Confidence based on deviation from 50
     };
   }
-
-  /**
-   * Get system prompt for OpenAI
-   */
-  getSystemPrompt(type) {
-    return `You are an expert scam detection system. Analyze the provided ${type} content and determine if it's a scam.
-    Return a JSON object with these exact fields:
-    - isScam: boolean (true if scam, false if safe)
-    - confidence: number between 0 and 1
-    - category: string (phishing, fraud, spam, malware, job_scam, invoice_fraud, suspicious, safe, unknown)
-    - riskScore: number between 0 and 100
-    - explanation: string explaining your analysis
-    - indicators: array of strings (specific red flags found)
-    - recommendations: array of strings (advice for the user)
-    
-    Be thorough and consider: urgency tactics, financial requests, suspicious links, grammar errors, too-good-to-be-true offers.`;
+  
+  getLevelFromScore(score) {
+    if (score < 30) return 'safe';
+    if (score < 70) return 'suspicious';
+    return 'dangerous';
   }
-
-  /**
-   * Get user prompt for OpenAI
-   */
-  getUserPrompt(text, type) {
-    return `Analyze this ${type} content for scams:
-    
-    Content: "${text.substring(0, 2000)}"
-    
-    ${type === 'url' ? 'Note: This is a URL. Check for suspicious domains, redirects, and phishing attempts.' : ''}
-    ${type === 'job_offer' ? 'Note: This is a job offer. Check for upfront payments, unrealistic salaries, and vague job descriptions.' : ''}
-    ${type === 'invoice' ? 'Note: This is an invoice. Check for payment urgency, incorrect details, and sender verification.' : ''}
-    
-    Provide your analysis in the specified JSON format.`;
-  }
-
-  /**
-   * Format AI result to match our schema
-   */
-  formatAIResult(aiResult, type) {
-    return {
-      isScam: aiResult.isScam || false,
-      confidence: Math.min(Math.max(aiResult.confidence || 0.5, 0), 1),
-      category: aiResult.category || 'unknown',
-      riskScore: Math.min(Math.max(aiResult.riskScore || 50, 0), 100),
-      explanation: aiResult.explanation || 'AI analysis completed',
-      indicators: aiResult.indicators || [],
-      recommendations: aiResult.recommendations || [],
-      detectionMethod: 'ai'
-    };
-  }
-
-  /**
-   * Generate explanation based on risk score and indicators
-   */
-  generateExplanation(riskScore, indicators, type) {
-    if (riskScore >= 80) {
-      return `High-risk ${type} detected. Multiple scam indicators found including: ${indicators.slice(0, 3).join(', ')}.`;
-    } else if (riskScore >= 60) {
-      return `Moderate-risk ${type} detected. Several suspicious elements found: ${indicators.slice(0, 2).join(', ')}.`;
-    } else if (riskScore >= 40) {
-      return `Low-risk ${type} with some cautionary elements: ${indicators[0] || 'minor concerns'}.`;
-    } else if (riskScore >= 20) {
-      return `Mostly safe ${type} with minimal concerns.`;
+  
+  getExplanationFromScore(score, type) {
+    if (score < 30) {
+      return `This ${type} appears to be safe based on heuristic analysis. No major scam indicators were detected.`;
+    } else if (score < 70) {
+      return `This ${type} shows some suspicious characteristics. Exercise caution and verify through other means.`;
     } else {
-      return `Safe ${type} with no significant scam indicators detected.`;
+      return `This ${type} has strong indications of being a scam. Avoid interacting with it and report if possible.`;
     }
   }
 }

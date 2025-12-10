@@ -1,285 +1,276 @@
-import { useState, useCallback } from 'react'
-import { useDropzone } from 'react-dropzone'
+import React, { useState, useRef } from 'react';
+import { motion } from 'framer-motion';
+import { useAuth } from '../context/AuthContext';
+import ScoreMeter from '../components/ScoreMeter';
+import api from '../services/api';
+import toast from 'react-hot-toast';
 import {
   Upload,
-  Image,
+  Image as ImageIcon,
   FileText,
+  Shield,
   AlertTriangle,
   CheckCircle,
   X,
+  Loader,
+  Eye,
   Download,
-  RotateCw,
-  ZoomIn,
-  ZoomOut
-} from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
-import Tesseract from 'tesseract.js'
-import ScoreMeter from '../components/ScoreMeter'
-import { api } from '../services/api'
-import toast from 'react-hot-toast'
+  RefreshCw
+} from 'lucide-react';
 
 const InvoiceOCR = () => {
-  const [file, setFile] = useState(null)
-  const [preview, setPreview] = useState(null)
-  const [extractedText, setExtractedText] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [scanResult, setScanResult] = useState(null)
-  const [ocrProgress, setOcrProgress] = useState(0)
-  const [zoom, setZoom] = useState(1)
+  const { user, subscription } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [extractedText, setExtractedText] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const fileInputRef = useRef(null);
 
-  const onDrop = useCallback((acceptedFiles) => {
-    const selectedFile = acceptedFiles[0]
-    if (!selectedFile) return
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    setFile(selectedFile)
-    setPreview(URL.createObjectURL(selectedFile))
-    setExtractedText('')
-    setScanResult(null)
-  }, [])
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: {
-      'image/*': ['.png', '.jpg', '.jpeg', '.bmp', '.webp']
-    },
-    maxFiles: 1,
-    maxSize: 5 * 1024 * 1024 // 5MB
-  })
-
-  const extractWithOCR = async () => {
-    if (!file) {
-      toast.error('Please select an image first')
-      return
+    // Check file type
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+    if (!allowedTypes.includes(file.type)) {
+      toast.error('Only JPEG, PNG, and PDF files are allowed');
+      return;
     }
 
-    setLoading(true)
-    setOcrProgress(0)
+    // Check file size (10MB max)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('File size must be less than 10MB');
+      return;
+    }
+
+    setSelectedFile(file);
+
+    // Create preview URL for images
+    if (file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      setPreviewUrl(url);
+    } else {
+      setPreviewUrl(null);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      toast.error('Please select a file first');
+      return;
+    }
+
+    // Check if user has OCR access
+    if (!['premium', 'enterprise'].includes(user?.subscription)) {
+      toast.error('OCR feature requires premium subscription');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('invoice', selectedFile);
 
     try {
-      const result = await Tesseract.recognize(
-        file,
-        'eng',
-        {
-          logger: (m) => {
-            if (m.status === 'recognizing text') {
-              setOcrProgress(m.progress)
-            }
-          }
-        }
-      )
+      setUploading(true);
+      toast.loading('Uploading and processing invoice...');
 
-      setExtractedText(result.data.text)
-      toast.success('Text extracted successfully')
+      const response = await api.post('/ocr/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      toast.dismiss();
+      toast.success('Invoice processed successfully!');
+
+      setResult(response.data.data);
+      setExtractedText(response.data.data.extractedText);
     } catch (error) {
-      toast.error('Failed to extract text from image')
+      toast.dismiss();
+      const message = error.response?.data?.error || 'Upload failed';
+      toast.error(message);
     } finally {
-      setLoading(false)
+      setUploading(false);
     }
-  }
+  };
 
-  const scanInvoice = async () => {
-    if (!extractedText.trim()) {
-      toast.error('No text to analyze')
-      return
+  const clearFile = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
     }
-
-    setLoading(true)
-    try {
-      const response = await api.post('/scan/text', {
-        text: extractedText,
-        type: 'invoice'
-      })
-      setScanResult(response.data.data.scan)
-      toast.success('Invoice analysis complete')
-    } catch (error) {
-      toast.error('Failed to analyze invoice')
-    } finally {
-      setLoading(false)
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setResult(null);
+    setExtractedText('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
-  }
+  };
 
-  const clearAll = () => {
-    setFile(null)
-    setPreview(null)
-    setExtractedText('')
-    setScanResult(null)
-    setZoom(1)
-    if (preview) {
-      URL.revokeObjectURL(preview)
-    }
-  }
+  const downloadResult = () => {
+    if (!result) return;
 
-  const commonInvoiceScams = [
-    'Overdue payment threats',
-    'Fake company details',
-    'Incorrect payment details',
-    'Urgent payment demands',
-    'Suspicious bank accounts',
-    'Duplicate invoices',
-    'Inflated amounts'
-  ]
+    const data = {
+      scanId: result.scanId,
+      score: result.result.score,
+      level: result.result.level,
+      explanation: result.result.explanation,
+      detectedIssues: result.result.detectedIssues,
+      extractedText: extractedText,
+      timestamp: new Date().toISOString()
+    };
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `safecheck-invoice-result-${result.scanId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const getInvoiceIndicators = () => {
+    return [
+      { text: 'Unusual payment methods', risk: 'High' },
+      { text: 'Pressure tactics in text', risk: 'High' },
+      { text: 'Mismatched company details', risk: 'Medium' },
+      { text: 'Suspicious bank information', risk: 'High' },
+      { text: 'No VAT/tax information', risk: 'Low' },
+      { text: 'Generic or missing contact info', risk: 'Medium' }
+    ];
+  };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-          Invoice OCR Scanner
-        </h1>
-        <p className="text-xl text-gray-600 dark:text-gray-400">
-          Upload invoice images to extract text and detect fraud
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="text-center">
+        <h1 className="text-4xl font-bold mb-4">Invoice OCR Scanner</h1>
+        <p className="text-gray-600 max-w-2xl mx-auto">
+          Upload invoice images or PDFs for text extraction and scam detection analysis.
+          Supports JPEG, PNG, and PDF formats.
         </p>
+        <div className="mt-4 flex items-center justify-center space-x-4">
+          <div className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+            Max file size: 10MB
+          </div>
+          <div className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+            Premium feature
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column - Upload & Preview */}
-        <div className="space-y-8">
+        <div className="lg:col-span-2 space-y-6">
           {/* Upload Area */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+            className="card"
           >
-            <div className="flex items-center space-x-3 mb-6">
-              <div className="p-3 bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">
-                <Upload className="h-6 w-6 text-white" />
+            <div className="text-center mb-6">
+              <div className="h-20 w-20 bg-gradient-to-r from-blue-100 to-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Upload className="text-blue-600" size={32} />
               </div>
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  Upload Invoice
-                </h2>
-                <p className="text-gray-600 dark:text-gray-400">
-                  Upload an image of your invoice
-                </p>
-              </div>
+              <h3 className="text-xl font-bold mb-2">Upload Invoice</h3>
+              <p className="text-gray-600">Drag & drop or click to browse files</p>
             </div>
 
             <div
-              {...getRootProps()}
-              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 ${
-                isDragActive
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                  : 'border-gray-300 dark:border-gray-600 hover:border-blue-500 hover:bg-gray-50 dark:hover:bg-gray-700'
+              onClick={() => !uploading && fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-200 ${
+                uploading
+                  ? 'border-blue-300 bg-blue-50'
+                  : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
               }`}
             >
-              <input {...getInputProps()} />
-              
-              <AnimatePresence>
-                {file ? (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    className="space-y-4"
-                  >
-                    <div className="relative mx-auto max-w-xs">
-                      <div className="relative overflow-hidden rounded-lg">
-                        <img
-                          src={preview}
-                          alt="Preview"
-                          className="w-full h-48 object-contain"
-                          style={{ transform: `scale(${zoom})` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-center space-x-2 mt-4">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setZoom(prev => Math.max(0.5, prev - 0.25))
-                          }}
-                          className="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
-                        >
-                          <ZoomOut className="h-4 w-4" />
-                        </button>
-                        <span className="text-sm text-gray-600 dark:text-gray-400">
-                          {Math.round(zoom * 100)}%
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setZoom(prev => Math.min(3, prev + 0.25))
-                          }}
-                          className="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
-                        >
-                          <ZoomIn className="h-4 w-4" />
-                        </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".jpg,.jpeg,.png,.pdf"
+                onChange={handleFileSelect}
+                className="hidden"
+                disabled={uploading}
+              />
+
+              {selectedFile ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between bg-gray-50 rounded-xl p-4">
+                    <div className="flex items-center space-x-3">
+                      <FileText className="text-blue-600" size={24} />
+                      <div>
+                        <p className="font-medium">{selectedFile.name}</p>
+                        <p className="text-sm text-gray-500">
+                          {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
                       </div>
                     </div>
-                    <div className="text-sm text-gray-600 dark:text-gray-400">
-                      {file.name} • {(file.size / 1024 / 1024).toFixed(2)} MB
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearFile();
+                      }}
+                      className="p-2 hover:bg-gray-200 rounded-lg"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  {previewUrl && (
+                    <div className="relative rounded-xl overflow-hidden border border-gray-200">
+                      <img
+                        src={previewUrl}
+                        alt="Preview"
+                        className="w-full h-64 object-contain bg-gray-50"
+                      />
+                      <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-sm rounded-lg p-2">
+                        <Eye size={20} />
+                      </div>
                     </div>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="space-y-4"
-                  >
-                    <div className="inline-flex p-4 bg-gray-100 dark:bg-gray-700 rounded-2xl">
-                      <Image className="h-12 w-12 text-gray-400" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-white mb-1">
-                        {isDragActive ? 'Drop the image here' : 'Drag & drop invoice image'}
-                      </p>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        or click to browse (PNG, JPG, WebP up to 5MB)
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                  )}
+                </div>
+              ) : (
+                <div className="py-12">
+                  <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-500">
+                    Click to select or drag and drop
+                  </p>
+                  <p className="text-sm text-gray-400 mt-2">
+                    JPEG, PNG, PDF up to 10MB
+                  </p>
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center justify-between mt-6">
+            <div className="mt-6 flex justify-between">
               <button
-                onClick={clearAll}
-                disabled={!file}
-                className="flex items-center space-x-2 px-4 py-2 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={clearFile}
+                disabled={!selectedFile || uploading}
+                className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <X className="h-4 w-4" />
-                <span>Clear</span>
+                Clear
               </button>
               <button
-                onClick={extractWithOCR}
-                disabled={!file || loading}
-                className="flex items-center space-x-2 px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-medium hover:shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleUpload}
+                disabled={!selectedFile || uploading}
+                className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading ? (
+                {uploading ? (
                   <>
-                    <RotateCw className="h-4 w-4 animate-spin" />
-                    <span>Extracting...</span>
+                    <Loader className="animate-spin" size={20} />
+                    <span>Processing...</span>
                   </>
                 ) : (
                   <>
-                    <FileText className="h-4 w-4" />
-                    <span>Extract Text</span>
+                    <Shield size={20} />
+                    <span>Analyze Invoice</span>
                   </>
                 )}
               </button>
             </div>
-
-            {/* OCR Progress */}
-            {loading && (
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-gray-600 dark:text-gray-400">
-                    Processing image...
-                  </span>
-                  <span className="text-sm font-medium text-gray-900 dark:text-white">
-                    {Math.round(ocrProgress * 100)}%
-                  </span>
-                </div>
-                <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full bg-gradient-to-r from-blue-500 to-purple-600"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${ocrProgress * 100}%` }}
-                    transition={{ duration: 0.3 }}
-                  />
-                </div>
-              </div>
-            )}
           </motion.div>
 
           {/* Extracted Text */}
@@ -287,216 +278,204 @@ const InvoiceOCR = () => {
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+              className="card"
             >
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-green-100 dark:bg-green-900/20 rounded-lg">
-                    <FileText className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900 dark:text-white">
-                      Extracted Text
-                    </h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {extractedText.length} characters
-                    </p>
-                  </div>
-                </div>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold flex items-center space-x-2">
+                  <FileText className="text-blue-600" />
+                  <span>Extracted Text</span>
+                </h3>
                 <button
-                  onClick={() => navigator.clipboard.writeText(extractedText)}
-                  className="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                  onClick={downloadResult}
+                  className="flex items-center space-x-2 text-blue-600 hover:text-blue-700"
                 >
-                  <Download className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                  <Download size={20} />
+                  <span>Download Result</span>
                 </button>
               </div>
 
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-4 max-h-64 overflow-y-auto">
-                <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
+              <div className="bg-gray-50 rounded-xl p-4 max-h-96 overflow-y-auto">
+                <pre className="whitespace-pre-wrap font-mono text-sm text-gray-700">
                   {extractedText}
                 </pre>
-              </div>
-
-              <div className="mt-6">
-                <button
-                  onClick={scanInvoice}
-                  disabled={loading}
-                  className="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-medium hover:shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? (
-                    <div className="flex items-center justify-center space-x-2">
-                      <RotateCw className="h-4 w-4 animate-spin" />
-                      <span>Analyzing...</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center space-x-2">
-                      <AlertTriangle className="h-4 w-4" />
-                      <span>Scan for Invoice Fraud</span>
-                    </div>
-                  )}
-                </button>
               </div>
             </motion.div>
           )}
         </div>
 
         {/* Right Column - Results & Info */}
-        <div className="space-y-8">
-          {/* Results Card */}
-          {scanResult ? (
+        <div className="space-y-6">
+          {/* Current Result */}
+          {result ? (
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="card"
             >
+              <div className="flex justify-between items-start mb-6">
+                <h3 className="text-xl font-bold">Analysis Result</h3>
+                <div className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+                  Scan ID: {result.scanId?.slice(-8)}
+                </div>
+              </div>
+
               <div className="text-center mb-6">
-                <ScoreMeter score={scanResult.riskScore} size="lg" />
+                <ScoreMeter score={result.result.score} size={180} />
               </div>
 
               <div className="space-y-4">
-                <div className="text-center">
-                  <h3 className={`text-xl font-bold mb-2 ${
-                    scanResult.riskScore >= 60 ? 'text-red-600' :
-                    scanResult.riskScore >= 30 ? 'text-yellow-600' :
-                    'text-green-600'
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-2">Risk Level</h4>
+                  <div className={`px-4 py-2 rounded-lg text-center font-bold text-lg ${
+                    result.result.level === 'safe' ? 'bg-green-100 text-green-800' :
+                    result.result.level === 'suspicious' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-red-100 text-red-800'
                   }`}>
-                    {scanResult.result.isScam ? '⚠️ Fraud Detected' : '✅ Likely Legitimate'}
-                  </h3>
-                  <p className="text-gray-600 dark:text-gray-400">
-                    {scanResult.result.explanation}
+                    {result.result.level.toUpperCase()}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-2">Confidence</h4>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-green-500 h-2 rounded-full"
+                      style={{ width: `${result.result.confidence}%` }}
+                    ></div>
+                  </div>
+                  <div className="text-right text-sm text-gray-600 mt-1">
+                    {result.result.confidence}%
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-2">Key Findings</h4>
+                  <p className="text-gray-600 text-sm">
+                    {result.result.explanation}
                   </p>
                 </div>
 
-                {/* Indicators */}
-                {scanResult.result.indicators && scanResult.result.indicators.length > 0 && (
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <h4 className="font-semibold text-gray-900 dark:text-white mb-3">
-                      Red Flags Found
-                    </h4>
+                {result.result.detectedIssues && result.result.detectedIssues.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-gray-700 mb-2">Detected Issues</h4>
                     <div className="space-y-2">
-                      {scanResult.result.indicators.slice(0, 5).map((indicator, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center space-x-2 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg"
-                        >
-                          <AlertTriangle className="h-4 w-4 text-red-600" />
-                          <span className="text-sm text-gray-700 dark:text-gray-300">
-                            {indicator}
-                          </span>
+                      {result.result.detectedIssues.slice(0, 3).map((issue, index) => (
+                        <div key={index} className="flex items-start space-x-2">
+                          <AlertTriangle size={16} className="text-red-500 mt-0.5 flex-shrink-0" />
+                          <span className="text-sm text-gray-700">{issue}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
-
-                {/* Recommendations */}
-                {scanResult.result.recommendations && scanResult.result.recommendations.length > 0 && (
-                  <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                    <h4 className="font-semibold text-gray-900 dark:text-white mb-3">
-                      Recommendations
-                    </h4>
-                    <div className="space-y-2">
-                      {scanResult.result.recommendations.map((recommendation, index) => (
-                        <div
-                          key={index}
-                          className="flex items-start space-x-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg"
-                        >
-                          <CheckCircle className="h-4 w-4 text-blue-600 mt-0.5" />
-                          <span className="text-sm text-gray-700 dark:text-gray-300">
-                            {recommendation}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Confidence</p>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {(scanResult.result.confidence * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Category</p>
-                      <p className="font-medium text-gray-900 dark:text-white capitalize">
-                        {scanResult.result.category.replace('_', ' ')}
-                      </p>
-                    </div>
-                  </div>
-                </div>
               </div>
             </motion.div>
           ) : (
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="card"
             >
-              <div className="text-center">
-                <div className="inline-flex p-4 bg-gray-100 dark:bg-gray-700 rounded-2xl mb-4">
-                  <AlertTriangle className="h-12 w-12 text-gray-400" />
-                </div>
-                <h3 className="font-semibold text-gray-900 dark:text-white mb-2">
-                  Analysis Results
-                </h3>
-                <p className="text-gray-600 dark:text-gray-400">
-                  Upload an invoice and extract text to see analysis results
-                </p>
+              <h3 className="text-xl font-bold mb-6">Invoice Scam Indicators</h3>
+              <div className="space-y-4">
+                {getInvoiceIndicators().map((indicator, index) => (
+                  <div key={index} className="flex items-start space-x-3">
+                    <AlertTriangle size={16} className={`mt-0.5 flex-shrink-0 ${
+                      indicator.risk === 'High' ? 'text-red-500' :
+                      indicator.risk === 'Medium' ? 'text-yellow-500' :
+                      'text-gray-500'
+                    }`} />
+                    <div>
+                      <p className="font-medium">{indicator.text}</p>
+                      <p className="text-xs text-gray-500">Risk: {indicator.risk}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </motion.div>
           )}
 
-          {/* Common Scams Card */}
+          {/* Subscription Status */}
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 }}
-            className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+            className="card bg-gradient-to-br from-purple-50 to-blue-50"
           >
-            <div className="flex items-center space-x-3 mb-6">
-              <div className="p-2 bg-red-100 dark:bg-red-900/20 rounded-lg">
-                <AlertTriangle className="h-5 w-5 text-red-600" />
+            <h3 className="text-xl font-bold mb-4">OCR Access</h3>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-700">Current Plan</span>
+                <span className="font-bold capitalize">{user?.subscription || 'free'}</span>
               </div>
-              <div>
-                <h3 className="font-semibold text-gray-900 dark:text-white">
-                  Common Invoice Scams
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Warning signs to watch for
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {commonInvoiceScams.map((scam, index) => (
-                <div key={index} className="flex items-start space-x-3">
-                  <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">
-                    {scam}
+              
+              <div className="flex items-center justify-between">
+                <span className="text-gray-700">OCR Feature</span>
+                {['premium', 'enterprise'].includes(user?.subscription) ? (
+                  <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                    Available
                   </span>
-                </div>
-              ))}
-            </div>
+                ) : (
+                  <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-sm">
+                    Premium Only
+                  </span>
+                )}
+              </div>
 
-            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                <p className="mb-2">💡 <strong>Tips:</strong></p>
-                <ul className="space-y-1">
-                  <li>• Verify sender's contact information</li>
-                  <li>• Check invoice numbers against records</li>
-                  <li>• Contact the company directly if unsure</li>
-                  <li>• Never pay to suspicious bank accounts</li>
-                </ul>
+              <div className="pt-4">
+                {!['premium', 'enterprise'].includes(user?.subscription) ? (
+                  <a
+                    href="/subscription"
+                    className="block text-center btn-primary"
+                  >
+                    Upgrade for OCR Access
+                  </a>
+                ) : (
+                  <div className="text-center text-sm text-gray-600">
+                    <CheckCircle className="inline text-green-500 mr-2" size={16} />
+                    You have access to OCR features
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Usage Stats */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.2 }}
+            className="card"
+          >
+            <h3 className="text-xl font-bold mb-4">Usage Statistics</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Scans Remaining</span>
+                <span className="font-bold">{user?.scansLeft || 0}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Total Scans Used</span>
+                <span className="font-bold">
+                  {subscription?.features?.maxScans 
+                    ? subscription.features.maxScans - (user?.scansLeft || 0)
+                    : 0}
+                </span>
+              </div>
+              <div className="pt-4">
+                <button
+                  onClick={() => window.location.reload()}
+                  className="w-full flex items-center justify-center space-x-2 btn-secondary"
+                >
+                  <RefreshCw size={16} />
+                  <span>Refresh Stats</span>
+                </button>
               </div>
             </div>
           </motion.div>
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default InvoiceOCR
+export default InvoiceOCR;

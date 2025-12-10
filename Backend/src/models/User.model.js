@@ -2,73 +2,47 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Name is required'],
-    trim: true,
-    minlength: [2, 'Name must be at least 2 characters'],
-    maxlength: [100, 'Name cannot exceed 100 characters']
-  },
   email: {
     type: String,
-    required: [true, 'Email is required'],
+    required: true,
     unique: true,
     lowercase: true,
-    trim: true,
-    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please enter a valid email']
+    trim: true
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
-    minlength: [6, 'Password must be at least 6 characters'],
-    select: false
+    required: true,
+    minlength: 6
+  },
+  name: {
+    type: String,
+    required: true,
+    trim: true
   },
   subscription: {
-    active: {
-      type: Boolean,
-      default: false
-    },
-    plan: {
-      type: String,
-      enum: ['free', 'monthly', 'yearly'],
-      default: 'free'
-    },
-    startsAt: {
-      type: Date
-    },
-    endsAt: {
-      type: Date
-    }
-  },
-  role: {
     type: String,
-    enum: ['user', 'admin'],
-    default: 'user'
+    enum: ['free', 'basic', 'premium', 'enterprise'],
+    default: 'free'
   },
-  lastLogin: {
-    type: Date
+  subscriptionExpiry: {
+    type: Date,
+    default: null
   },
-  isActive: {
-    type: Boolean,
-    default: true
-  }
-}, {
-  timestamps: true,
-  toJSON: {
-    virtuals: true,
-    transform: function(doc, ret) {
-      delete ret.password;
-      delete ret.__v;
-      return ret;
-    }
+  scansLeft: {
+    type: Number,
+    default: 10
   },
-  toObject: {
-    virtuals: true,
-    transform: function(doc, ret) {
-      delete ret.password;
-      delete ret.__v;
-      return ret;
-    }
+  cashfreeCustomerId: {
+    type: String,
+    default: null
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
 });
 
@@ -85,29 +59,32 @@ userSchema.pre('save', async function(next) {
   }
 });
 
+// Update timestamp on save
+userSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
 // Compare password method
 userSchema.methods.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Update last login on successful login
-userSchema.methods.updateLastLogin = async function() {
-  this.lastLogin = new Date();
-  await this.save();
+// Check if user has scans left
+userSchema.methods.hasScansLeft = function() {
+  if (this.subscription === 'premium' || this.subscription === 'enterprise') {
+    return true;
+  }
+  return this.scansLeft > 0;
 };
 
-// Virtual for scan count
-userSchema.virtual('scanCount', {
-  ref: 'Scan',
-  localField: '_id',
-  foreignField: 'user',
-  count: true
-});
-
-// Indexes
-userSchema.index({ email: 1 });
-userSchema.index({ 'subscription.active': 1 });
-userSchema.index({ createdAt: -1 });
+// Use scans
+userSchema.methods.useScan = function() {
+  if (this.subscription === 'free') {
+    this.scansLeft = Math.max(0, this.scansLeft - 1);
+  }
+  return this.save();
+};
 
 const User = mongoose.model('User', userSchema);
 

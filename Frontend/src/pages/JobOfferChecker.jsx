@@ -1,385 +1,409 @@
-import { useState } from 'react'
+import React, { useState } from 'react';
+import { motion } from 'framer-motion';
+import { useAuth } from '../context/AuthContext';
+import ScoreMeter from '../components/ScoreMeter';
+import api from '../services/api';
+import toast from 'react-hot-toast';
 import { 
   Briefcase, 
-  AlertTriangle, 
-  CheckCircle, 
-  Clock, 
-  DollarSign,
-  MapPin,
-  Calendar,
-  User,
-  Copy,
-  Download,
-  Share2
-} from 'lucide-react'
-import { motion } from 'framer-motion'
-import ScoreMeter from '../components/ScoreMeter'
-import { api } from '../services/api'
-import toast from 'react-hot-toast'
+  Building, 
+  Mail, 
+  DollarSign, 
+  FileText, 
+  AlertTriangle,
+  CheckCircle,
+  Upload,
+  Loader
+} from 'lucide-react';
 
 const JobOfferChecker = () => {
-  const [jobText, setJobText] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [scanResult, setScanResult] = useState(null)
-  const [extractedDetails, setExtractedDetails] = useState(null)
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  
+  const [formData, setFormData] = useState({
+    title: '',
+    company: '',
+    contact: '',
+    salary: '',
+    description: ''
+  });
 
-  const sampleJobOffers = [
-    {
-      title: 'Remote Data Entry Clerk',
-      content: 'Work from home earning $5000 monthly. No experience needed. Just 2 hours daily. Apply now!',
-      risk: 85
-    },
-    {
-      title: 'Software Engineer at TechCorp',
-      content: 'TechCorp is hiring experienced software engineers. Competitive salary, benefits, and remote options available.',
-      risk: 15
-    },
-    {
-      title: 'Mystery Shopper Needed',
-      content: 'Earn quick cash by shopping! We pay $50 per assignment. No fees required.',
-      risk: 75
+  const [requirements, setRequirements] = useState({
+    hasTitle: false,
+    hasDescription: false,
+    hasCompany: false,
+    hasContact: false,
+    hasSalary: false
+  });
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+
+    // Update requirements
+    if (name === 'title') {
+      setRequirements(prev => ({ ...prev, hasTitle: value.trim().length > 0 }));
+    } else if (name === 'description') {
+      setRequirements(prev => ({ ...prev, hasDescription: value.trim().length > 20 }));
     }
-  ]
+  };
 
-  const jobRedFlags = [
-    'No experience required',
-    'Unrealistically high salary',
-    'Upfront payment requested',
-    'Vague job description',
-    'Urgent hiring required',
-    'No company website provided',
-    'Personal information collection',
-    'Payment via gift cards or crypto'
-  ]
-
-  const extractJobDetails = (text) => {
-    const details = {
-      salary: text.match(/\$?\d+[,.]?\d*\s*(k|thousand|million|per\s*(year|month|hour))?/gi)?.[0] || 'Not specified',
-      location: text.match(/(remote|hybrid|onsite|work from home)/gi)?.[0] || 'Not specified',
-      experience: text.match(/\d+\s*(years?|yrs?)\s*experience/gi)?.[0] || 'Not specified',
-      type: text.match(/(full.?time|part.?time|contract|freelance|internship)/gi)?.[0] || 'Not specified'
-    }
-    setExtractedDetails(details)
-  }
-
-  const handleScan = async () => {
-    if (!jobText.trim()) {
-      toast.error('Please enter job offer text')
-      return
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!formData.description.trim()) {
+      toast.error('Please enter a job description');
+      return;
     }
 
-    setLoading(true)
+    if (formData.description.trim().length < 20) {
+      toast.error('Description should be at least 20 characters');
+      return;
+    }
+
     try {
-      extractJobDetails(jobText)
-      const response = await api.post('/scan/text', {
-        text: jobText,
-        type: 'job_offer'
-      })
-      setScanResult(response.data.data.scan)
-      toast.success('Job offer analyzed successfully')
+      setLoading(true);
+      toast.loading('Analyzing job offer...');
+      
+      const response = await api.post('/scan/job', formData);
+      toast.dismiss();
+      toast.success('Analysis completed!');
+      
+      setResult(response.data.data);
     } catch (error) {
-      toast.error('Failed to analyze job offer')
+      toast.dismiss();
+      const message = error.response?.data?.error || 'Analysis failed';
+      toast.error(message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  const handleSample = (sample) => {
-    setJobText(sample.content)
-    extractJobDetails(sample.content)
-  }
+  const resetForm = () => {
+    setFormData({
+      title: '',
+      company: '',
+      contact: '',
+      salary: '',
+      description: ''
+    });
+    setResult(null);
+    setRequirements({
+      hasTitle: false,
+      hasDescription: false,
+      hasCompany: false,
+      hasContact: false,
+      hasSalary: false
+    });
+  };
+
+  const getScamIndicators = () => {
+    const indicators = [
+      { text: 'Upfront payment required', weight: 'High' },
+      { text: 'Vague company information', weight: 'Medium' },
+      { text: 'Personal information requested early', weight: 'High' },
+      { text: 'Too-good-to-be-true salary', weight: 'Medium' },
+      { text: 'Urgent response required', weight: 'Low' },
+      { text: 'Poor grammar and spelling', weight: 'Low' }
+    ];
+    return indicators;
+  };
+
+  const getSafetyTips = () => {
+    return [
+      'Research the company thoroughly',
+      'Never pay money to get a job',
+      'Verify contact information',
+      'Check for official company email domains',
+      'Look for reviews from current/former employees',
+      'Trust your instincts'
+    ];
+  };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="text-center mb-12">
-        <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">
-          Job Offer Checker
-        </h1>
-        <p className="text-xl text-gray-600 dark:text-gray-400">
-          Verify job offers and protect yourself from employment scams
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="text-center">
+        <h1 className="text-4xl font-bold mb-4">Job Offer Checker</h1>
+        <p className="text-gray-600 max-w-2xl mx-auto">
+          Verify job offers for potential scams and fraudulent activities. Paste the job description below for analysis.
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left Column - Input & Samples */}
-        <div className="lg:col-span-2">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
-          >
-            <div className="flex items-center space-x-3 mb-6">
-              <div className="p-3 bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl">
-                <Briefcase className="h-6 w-6 text-white" />
+        {/* Left Column - Form */}
+        <motion.div
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="lg:col-span-2"
+        >
+          <div className="card">
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Basic Information */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Briefcase size={16} className="inline mr-2" />
+                    Job Title
+                  </label>
+                  <input
+                    type="text"
+                    name="title"
+                    value={formData.title}
+                    onChange={handleInputChange}
+                    className="input-field"
+                    placeholder="e.g., Software Engineer"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Building size={16} className="inline mr-2" />
+                    Company Name
+                  </label>
+                  <input
+                    type="text"
+                    name="company"
+                    value={formData.company}
+                    onChange={handleInputChange}
+                    className="input-field"
+                    placeholder="e.g., Tech Corp Inc."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <Mail size={16} className="inline mr-2" />
+                    Contact Email/Phone
+                  </label>
+                  <input
+                    type="text"
+                    name="contact"
+                    value={formData.contact}
+                    onChange={handleInputChange}
+                    className="input-field"
+                    placeholder="contact@company.com"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <DollarSign size={16} className="inline mr-2" />
+                    Salary/Compensation
+                  </label>
+                  <input
+                    type="text"
+                    name="salary"
+                    value={formData.salary}
+                    onChange={handleInputChange}
+                    className="input-field"
+                    placeholder="e.g., $80,000 - $100,000"
+                  />
+                </div>
               </div>
+
+              {/* Description */}
               <div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  Analyze Job Offer
-                </h2>
-                <p className="text-gray-600 dark:text-gray-400">
-                  Paste job description to check for scams
-                </p>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <FileText size={16} className="inline mr-2" />
+                  Job Description *
+                </label>
+                <textarea
+                  name="description"
+                  value={formData.description}
+                  onChange={handleInputChange}
+                  className="w-full h-64 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                  placeholder="Paste the complete job description here..."
+                  required
+                />
+                <div className="mt-2 text-sm text-gray-600">
+                  {formData.description.length}/5000 characters
+                </div>
               </div>
-            </div>
 
-            <textarea
-              value={jobText}
-              onChange={(e) => setJobText(e.target.value)}
-              placeholder="Paste the job offer description here..."
-              className="w-full h-64 px-4 py-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:focus:ring-blue-400 dark:focus:border-blue-400 resize-none transition-colors"
-            />
-
-            <div className="flex items-center justify-between mt-4">
-              <div className="text-sm text-gray-500 dark:text-gray-400">
-                {jobText.length} characters • {jobText.split(/\s+/).filter(Boolean).length} words
+              {/* Requirements Checklist */}
+              <div className="bg-blue-50 rounded-lg p-4">
+                <h3 className="font-medium text-blue-800 mb-3">Information Checklist</h3>
+                <div className="space-y-2">
+                  {[
+                    { label: 'Job title provided', met: requirements.hasTitle },
+                    { label: 'Detailed description (20+ chars)', met: requirements.hasDescription },
+                    { label: 'Company name provided', met: formData.company.trim().length > 0 },
+                    { label: 'Contact information provided', met: formData.contact.trim().length > 0 },
+                    { label: 'Salary/compensation mentioned', met: formData.salary.trim().length > 0 }
+                  ].map((item, index) => (
+                    <div key={index} className="flex items-center space-x-2">
+                      {item.met ? (
+                        <CheckCircle size={16} className="text-green-500" />
+                      ) : (
+                        <AlertTriangle size={16} className="text-yellow-500" />
+                      )}
+                      <span className={item.met ? 'text-green-700' : 'text-yellow-700'}>
+                        {item.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="flex items-center space-x-3">
+
+              {/* Action Buttons */}
+              <div className="flex justify-between pt-6">
                 <button
-                  onClick={() => setJobText('')}
-                  className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                  type="button"
+                  onClick={resetForm}
+                  className="btn-secondary"
                 >
-                  Clear
+                  Clear Form
                 </button>
                 <button
-                  onClick={handleScan}
-                  disabled={loading || !jobText.trim()}
-                  className="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-medium hover:shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  type="submit"
+                  disabled={loading || !formData.description.trim()}
+                  className="btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {loading ? (
-                    <div className="flex items-center space-x-2">
-                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <>
+                      <Loader className="animate-spin" size={20} />
                       <span>Analyzing...</span>
-                    </div>
+                    </>
                   ) : (
-                    <div className="flex items-center space-x-2">
-                      <AlertTriangle className="h-4 w-4" />
-                      <span>Check for Scams</span>
-                    </div>
+                    <>
+                      <Briefcase size={20} />
+                      <span>Analyze Job Offer</span>
+                    </>
                   )}
                 </button>
               </div>
-            </div>
+            </form>
+          </div>
+        </motion.div>
 
-            {/* Extracted Details */}
-            {extractedDetails && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="mt-6 bg-gray-50 dark:bg-gray-700 rounded-xl p-4"
-              >
-                <h3 className="font-semibold text-gray-900 dark:text-white mb-3">
-                  Extracted Details
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="flex items-center space-x-2">
-                    <DollarSign className="h-4 w-4 text-gray-500" />
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Salary</p>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {extractedDetails.salary}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <MapPin className="h-4 w-4 text-gray-500" />
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Location</p>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {extractedDetails.location}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <User className="h-4 w-4 text-gray-500" />
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Experience</p>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {extractedDetails.experience}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Calendar className="h-4 w-4 text-gray-500" />
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Type</p>
-                      <p className="font-medium text-gray-900 dark:text-white">
-                        {extractedDetails.type}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* Quick Samples */}
-            <div className="mt-8">
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-                Try with sample job offers
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {sampleJobOffers.map((job, index) => (
-                  <motion.button
-                    key={index}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => handleSample(job)}
-                    className="text-left p-4 bg-gray-50 dark:bg-gray-700 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-gray-900 dark:text-white">
-                        {job.title}
-                      </span>
-                      <div className={`px-2 py-1 rounded text-xs font-medium ${
-                        job.risk >= 60 ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
-                        job.risk >= 30 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
-                        'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                      }`}>
-                        Risk: {job.risk}%
-                      </div>
-                    </div>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
-                      {job.content}
-                    </p>
-                  </motion.button>
-                ))}
-              </div>
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Right Column - Results & Red Flags */}
-        <div className="space-y-8">
-          {/* Results Card */}
-          {scanResult ? (
+        {/* Right Column - Results & Info */}
+        <div className="space-y-6">
+          {/* Current Scan Result */}
+          {result ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+              className="card"
             >
+              <h3 className="text-xl font-bold mb-6">Analysis Result</h3>
+              
               <div className="text-center mb-6">
-                <ScoreMeter score={scanResult.riskScore} size="lg" />
+                <ScoreMeter score={result.result.score} size={180} />
               </div>
-
+              
               <div className="space-y-4">
-                <div className="text-center">
-                  <h3 className={`text-xl font-bold mb-2 ${
-                    scanResult.riskScore >= 60 ? 'text-red-600' :
-                    scanResult.riskScore >= 30 ? 'text-yellow-600' :
-                    'text-green-600'
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-2">Risk Level</h4>
+                  <div className={`px-4 py-2 rounded-lg text-center font-bold text-lg ${
+                    result.result.level === 'safe' ? 'bg-green-100 text-green-800' :
+                    result.result.level === 'suspicious' ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-red-100 text-red-800'
                   }`}>
-                    {scanResult.result.isScam ? '⚠️ Likely Scam' : '✅ Likely Legitimate'}
-                  </h3>
-                  <p className="text-gray-600 dark:text-gray-400">
-                    {scanResult.result.explanation}
-                  </p>
-                </div>
-
-                <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-                  <h4 className="font-semibold text-gray-900 dark:text-white mb-3">
-                    Analysis Details
-                  </h4>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Confidence</span>
-                      <span className="font-medium text-gray-900 dark:text-white">
-                        {(scanResult.result.confidence * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Category</span>
-                      <span className="font-medium text-gray-900 dark:text-white capitalize">
-                        {scanResult.result.category.replace('_', ' ')}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Method</span>
-                      <span className="font-medium text-gray-900 dark:text-white uppercase">
-                        {scanResult.detectionMethod || 'HEURISTIC'}
-                      </span>
-                    </div>
+                    {result.result.level.toUpperCase()}
                   </div>
                 </div>
-
-                <div className="flex items-center space-x-3 pt-4">
-                  <button className="flex-1 flex items-center justify-center space-x-2 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-                    <Copy className="h-4 w-4" />
-                    <span>Copy Report</span>
-                  </button>
-                  <button className="flex-1 flex items-center justify-center space-x-2 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-                    <Share2 className="h-4 w-4" />
-                    <span>Share</span>
-                  </button>
+                
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-2">Explanation</h4>
+                  <p className="text-gray-600 text-sm">
+                    {result.result.explanation}
+                  </p>
                 </div>
+                
+                {result.result.detectedIssues && result.result.detectedIssues.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-gray-700 mb-2">Detected Issues</h4>
+                    <div className="space-y-2">
+                      {result.result.detectedIssues.map((issue, index) => (
+                        <div key={index} className="flex items-start space-x-2">
+                          <AlertTriangle size={16} className="text-red-500 mt-0.5 flex-shrink-0" />
+                          <span className="text-sm text-gray-700">{issue}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           ) : (
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="card"
             >
-              <div className="text-center">
-                <div className="inline-flex p-4 bg-gray-100 dark:bg-gray-700 rounded-2xl mb-4">
-                  <Briefcase className="h-12 w-12 text-gray-400" />
-                </div>
-                <h3 className="font-semibold text-gray-900 dark:text-white mb-2">
-                  No Analysis Yet
-                </h3>
-                <p className="text-gray-600 dark:text-gray-400">
-                  Enter a job offer above to check for scams
-                </p>
+              <h3 className="text-xl font-bold mb-6">Common Scam Indicators</h3>
+              <div className="space-y-4">
+                {getScamIndicators().map((indicator, index) => (
+                  <div key={index} className="flex items-start space-x-3">
+                    <AlertTriangle size={16} className={`mt-0.5 flex-shrink-0 ${
+                      indicator.weight === 'High' ? 'text-red-500' :
+                      indicator.weight === 'Medium' ? 'text-yellow-500' :
+                      'text-gray-500'
+                    }`} />
+                    <div>
+                      <p className="font-medium">{indicator.text}</p>
+                      <p className="text-xs text-gray-500">Risk: {indicator.weight}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </motion.div>
           )}
 
-          {/* Red Flags Card */}
+          {/* Safety Tips */}
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 }}
-            className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8"
+            className="card bg-gradient-to-br from-green-50 to-blue-50"
           >
-            <div className="flex items-center space-x-3 mb-6">
-              <div className="p-2 bg-red-100 dark:bg-red-900/20 rounded-lg">
-                <AlertTriangle className="h-5 w-5 text-red-600" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-gray-900 dark:text-white">
-                  Common Job Scam Red Flags
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Warning signs to watch for
-                </p>
-              </div>
-            </div>
-
+            <h3 className="text-xl font-bold mb-6">Safety Tips</h3>
             <div className="space-y-3">
-              {jobRedFlags.map((flag, index) => (
-                <div key={index} className="flex items-start space-x-3">
-                  <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-                  <span className="text-sm text-gray-700 dark:text-gray-300">
-                    {flag}
-                  </span>
+              {getSafetyTips().map((tip, index) => (
+                <div key={index} className="flex items-center space-x-3">
+                  <CheckCircle size={16} className="text-green-500 flex-shrink-0" />
+                  <span className="text-gray-700">{tip}</span>
                 </div>
               ))}
             </div>
+          </motion.div>
 
-            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-600 dark:text-gray-400">
-                  Stay safe by verifying:
-                </div>
-                <div className="flex items-center space-x-2">
-                  <CheckCircle className="h-4 w-4 text-green-500" />
-                  <Clock className="h-4 w-4 text-blue-500" />
-                </div>
+          {/* User Stats */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.2 }}
+            className="card"
+          >
+            <h3 className="text-xl font-bold mb-4">Your Stats</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Scans Remaining</span>
+                <span className="font-bold">{user?.scansLeft || 0}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Current Plan</span>
+                <span className="font-bold capitalize">{user?.subscription || 'free'}</span>
+              </div>
+              <div className="pt-4">
+                <a
+                  href="/subscription"
+                  className="block text-center btn-primary"
+                >
+                  Upgrade Plan
+                </a>
               </div>
             </div>
           </motion.div>
         </div>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default JobOfferChecker
+export default JobOfferChecker;

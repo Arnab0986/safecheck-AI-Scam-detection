@@ -1,272 +1,253 @@
+const crypto = require('crypto');
 const User = require('../models/User.model');
 const Subscription = require('../models/Subscription.model');
 const cashfreeService = require('../services/cashfree.service');
 const logger = require('../utils/logger');
-const validator = require('../utils/validators');
 
-/**
- * @swagger
- * /api/v1/payment/create-order:
- *   post:
- *     summary: Create payment order
- *     tags: [Payment]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - plan
- *             properties:
- *               plan:
- *                 type: string
- *                 enum: [monthly, yearly]
- *     responses:
- *       200:
- *         description: Order created successfully
- */
-const createOrder = async (req, res) => {
-  const { error } = validator.validatePaymentOrder(req.body);
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      error: error.details[0].message
-    });
-  }
-
-  const { plan } = req.body;
-  const userId = req.user.userId;
-
+exports.createOrder = async (req, res) => {
   try {
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
+    const { plan, amount } = req.body;
+    const user = req.user;
 
-    // Define plan details
-    const planDetails = {
-      monthly: {
-        amount: 999, // ₹9.99
-        currency: 'INR',
-        description: 'Monthly SafeCheck Pro Subscription'
-      },
-      yearly: {
-        amount: 9999, // ₹99.99
-        currency: 'INR',
-        description: 'Yearly SafeCheck Pro Subscription'
-      }
-    };
-
-    const details = planDetails[plan];
-    if (!details) {
+    // Validate plan
+    const validPlans = ['basic', 'premium', 'enterprise'];
+    if (!validPlans.includes(plan)) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid plan selected'
+        error: 'Invalid plan'
       });
     }
 
     // Create order in Cashfree
     const orderData = {
-      order_amount: details.amount,
-      order_currency: details.currency,
-      order_id: `ORDER_${Date.now()}_${userId}`,
-      customer_details: {
-        customer_id: userId,
-        customer_email: user.email,
-        customer_name: user.name,
-        customer_phone: '9999999999' // Default for testing
+      orderId: `ORDER_${Date.now()}_${user._id}`,
+      orderAmount: amount,
+      orderCurrency: 'INR',
+      orderNote: `SafeCheck ${plan} subscription`,
+      customerDetails: {
+        customerId: user._id.toString(),
+        customerEmail: user.email,
+        customerPhone: '9999999999'
       },
-      order_meta: {
-        return_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment/callback?order_id={order_id}`
+      orderMeta: {
+        returnUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/subscription/success?order_id={order_id}`
       }
     };
 
-    const orderResult = await cashfreeService.createOrder(orderData);
+    const order = await cashfreeService.createOrder(orderData);
 
-    // Save subscription record
-    await Subscription.create({
-      user: userId,
-      orderId: orderResult.order_id,
-      plan,
-      amount: details.amount,
-      currency: details.currency,
-      status: 'PENDING',
-      paymentSessionId: orderResult.payment_session_id
-    });
+    // Update user subscription status
+    const subscription = await Subscription.findOneAndUpdate(
+      { userId: user._id },
+      {
+        plan,
+        status: 'pending',
+        cashfreeOrderId: orderData.orderId,
+        paymentDetails: {
+          amount,
+          currency: 'INR'
+        },
+        features: getPlanFeatures(plan)
+      },
+      { upsert: true, new: true }
+    );
 
-    logger.info(`Order created for user ${userId}, order: ${orderResult.order_id}`);
+    logger.info(`Order created for user ${user.email}: ${orderData.orderId}`);
 
-    res.json({
+    res.status(200).json({
       success: true,
       data: {
-        order: orderResult,
-        payment_session_id: orderResult.payment_session_id
+        order,
+        subscription
       }
     });
+
   } catch (error) {
-    logger.error('Create order error:', error);
+    logger.error(`Create order error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Failed to create payment order'
+      error: 'Failed to create order'
     });
   }
 };
 
-/**
- * @swagger
- * /api/v1/payment/verify:
- *   post:
- *     summary: Verify payment
- *     tags: [Payment]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - order_id
- *             properties:
- *               order_id:
- *                 type: string
- *     responses:
- *       200:
- *         description: Payment verified
- */
-const verifyPayment = async (req, res) => {
-  const { error } = validator.validatePaymentVerification(req.body);
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      error: error.details[0].message
-    });
-  }
-
-  const { order_id } = req.body;
-  const userId = req.user.userId;
-
+exports.verifyPayment = async (req, res) => {
   try {
-    // Verify payment with Cashfree
-    const paymentStatus = await cashfreeService.getPaymentStatus(order_id);
+    const { orderId } = req.body;
+    const user = req.user;
 
-    if (paymentStatus.order_status === 'PAID') {
+    // Verify payment with Cashfree
+    const paymentStatus = await cashfreeService.verifyPayment(orderId);
+
+    if (paymentStatus === 'PAID') {
       // Update subscription
       const subscription = await Subscription.findOneAndUpdate(
-        { orderId: order_id, user: userId },
+        { userId: user._id, cashfreeOrderId: orderId },
         {
-          status: 'ACTIVE',
-          paymentId: paymentStatus.cf_payment_id,
-          paidAmount: paymentStatus.payment_amount,
-          paymentTime: new Date(paymentStatus.payment_time),
-          subscriptionStart: new Date(),
-          subscriptionEnd: new Date(Date.now() + (req.body.plan === 'yearly' ? 365 : 30) * 24 * 60 * 60 * 1000)
+          status: 'active',
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+          'paymentDetails.transactionId': orderId
         },
         { new: true }
       );
 
-      // Update user subscription status
-      await User.findByIdAndUpdate(userId, {
-        'subscription.active': true,
-        'subscription.plan': subscription.plan,
-        'subscription.endsAt': subscription.subscriptionEnd
+      // Update user
+      await User.findByIdAndUpdate(user._id, {
+        subscription: subscription.plan,
+        subscriptionExpiry: subscription.endDate,
+        scansLeft: subscription.features.maxScans
       });
 
-      logger.info(`Payment verified for order ${order_id}, user ${userId}`);
+      logger.info(`Payment verified for user ${user.email}: ${orderId}`);
 
-      res.json({
+      res.status(200).json({
         success: true,
         data: {
-          verified: true,
+          status: 'success',
           subscription
         }
       });
     } else {
-      res.json({
+      res.status(400).json({
         success: false,
-        error: 'Payment not completed'
+        data: {
+          status: 'failed',
+          message: 'Payment not successful'
+        }
       });
     }
+
   } catch (error) {
-    logger.error('Verify payment error:', error);
+    logger.error(`Verify payment error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Failed to verify payment'
+      error: 'Payment verification failed'
     });
   }
 };
 
-/**
- * @swagger
- * /api/v1/payment/webhook:
- *   post:
- *     summary: Payment webhook (Cashfree callback)
- *     tags: [Payment]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *     responses:
- *       200:
- *         description: Webhook processed
- */
-const handleWebhook = async (req, res) => {
+exports.handleWebhook = async (req, res) => {
   try {
-    const signature = req.headers['x-webhook-signature'];
-    const payload = req.body;
+    const signature = req.headers['x-cashfree-signature'];
+    const payload = JSON.stringify(req.body);
 
     // Verify webhook signature
-    const isValid = await cashfreeService.verifyWebhookSignature(signature, payload);
+    const secret = process.env.CASHFREE_SECRET;
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(payload)
+      .digest('base64');
+
+    if (signature !== expectedSignature) {
+      logger.error('Invalid webhook signature');
+      return res.status(401).json({ success: false });
+    }
+
+    const event = req.body;
     
-    if (!isValid && process.env.NODE_ENV === 'production') {
-      return res.status(401).json({ success: false, error: 'Invalid signature' });
+    // Handle different webhook events
+    switch (event.event_type) {
+      case 'PAYMENT_SUCCESS_WEBHOOK':
+        await handlePaymentSuccess(event);
+        break;
+      case 'REFUND_SUCCESS_WEBHOOK':
+        await handleRefundSuccess(event);
+        break;
+      case 'SUBSCRIPTION_CANCELLED':
+        await handleSubscriptionCancelled(event);
+        break;
     }
 
-    const { orderId, orderStatus } = payload.data;
+    res.status(200).json({ success: true });
 
-    if (orderStatus === 'PAID') {
-      const subscription = await Subscription.findOneAndUpdate(
-        { orderId },
-        {
-          status: 'ACTIVE',
-          paymentId: payload.data.cfPaymentId,
-          paidAmount: payload.data.paymentAmount,
-          paymentTime: new Date(payload.data.paymentTime),
-          subscriptionStart: new Date(),
-          subscriptionEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
-        },
-        { new: true }
-      );
-
-      if (subscription) {
-        await User.findByIdAndUpdate(subscription.user, {
-          'subscription.active': true,
-          'subscription.plan': subscription.plan,
-          'subscription.endsAt': subscription.subscriptionEnd
-        });
-      }
-
-      logger.info(`Webhook: Subscription activated for order ${orderId}`);
-    }
-
-    res.json({ success: true });
   } catch (error) {
-    logger.error('Webhook error:', error);
-    res.status(500).json({ success: false, error: 'Webhook processing failed' });
+    logger.error(`Webhook error: ${error.message}`);
+    res.status(500).json({ success: false });
   }
 };
 
-module.exports = {
-  createOrder,
-  verifyPayment,
-  handleWebhook
-};
+async function handlePaymentSuccess(event) {
+  const { orderId } = event.data.order;
+  
+  // Find subscription by orderId
+  const subscription = await Subscription.findOne({ cashfreeOrderId: orderId });
+  if (subscription) {
+    subscription.status = 'active';
+    subscription.startDate = new Date();
+    subscription.endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    subscription.paymentDetails.transactionId = event.data.order.transactionId;
+    await subscription.save();
+
+    // Update user
+    await User.findByIdAndUpdate(subscription.userId, {
+      subscription: subscription.plan,
+      subscriptionExpiry: subscription.endDate,
+      scansLeft: subscription.features.maxScans
+    });
+
+    logger.info(`Webhook: Payment success for order ${orderId}`);
+  }
+}
+
+async function handleRefundSuccess(event) {
+  const { orderId } = event.data.order;
+  
+  const subscription = await Subscription.findOneAndUpdate(
+    { cashfreeOrderId: orderId },
+    { status: 'cancelled' },
+    { new: true }
+  );
+
+  if (subscription) {
+    await User.findByIdAndUpdate(subscription.userId, {
+      subscription: 'free',
+      subscriptionExpiry: null
+    });
+
+    logger.info(`Webhook: Refund processed for order ${orderId}`);
+  }
+}
+
+async function handleSubscriptionCancelled(event) {
+  const { subscriptionId } = event.data;
+  
+  const subscription = await Subscription.findOneAndUpdate(
+    { cashfreeSubscriptionId: subscriptionId },
+    { status: 'cancelled' },
+    { new: true }
+  );
+
+  if (subscription) {
+    await User.findByIdAndUpdate(subscription.userId, {
+      subscription: 'free',
+      subscriptionExpiry: null
+    });
+
+    logger.info(`Webhook: Subscription cancelled ${subscriptionId}`);
+  }
+}
+
+function getPlanFeatures(plan) {
+  const features = {
+    basic: {
+      maxScans: 100,
+      ocrEnabled: true,
+      apiAccess: false,
+      prioritySupport: false
+    },
+    premium: {
+      maxScans: 1000,
+      ocrEnabled: true,
+      apiAccess: true,
+      prioritySupport: true
+    },
+    enterprise: {
+      maxScans: 10000,
+      ocrEnabled: true,
+      apiAccess: true,
+      prioritySupport: true
+    }
+  };
+  return features[plan] || features.basic;
+}

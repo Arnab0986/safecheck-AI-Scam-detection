@@ -8,7 +8,8 @@ const authMiddleware = require('../middleware/auth.middleware');
 // Configure multer for file upload
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/');
+    const uploadDir = process.env.OCR_TMP_DIR || '/tmp/ocr';
+    cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -17,76 +18,31 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  // Accept images only
-  if (!file.originalname.match(/\.(jpg|jpeg|png|gif|bmp|webp)$/i)) {
-    return cb(new Error('Only image files are allowed!'), false);
+  // Accept images and PDFs
+  const allowedTypes = /jpeg|jpg|png|pdf/;
+  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+  const mimetype = allowedTypes.test(file.mimetype);
+
+  if (extname && mimetype) {
+    return cb(null, true);
+  } else {
+    cb(new Error('Only JPEG, PNG, and PDF files are allowed'));
   }
-  cb(null, true);
 };
 
 const upload = multer({
   storage: storage,
-  fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
-  }
+    fileSize: 10 * 1024 * 1024 // 10MB max file size
+  },
+  fileFilter: fileFilter
 });
 
-/**
- * @swagger
- * tags:
- *   name: OCR
- *   description: Optical Character Recognition for images
- */
+// All OCR routes require authentication
+router.use(authMiddleware);
 
-/**
- * @swagger
- * /api/v1/ocr/extract:
- *   post:
- *     summary: Extract text from image using OCR
- *     tags: [OCR]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               image:
- *                 type: string
- *                 format: binary
- *                 description: Image file (jpg, png, etc.)
- *     responses:
- *       200:
- *         description: Text extracted successfully
- */
-router.post('/extract', authMiddleware, upload.single('image'), ocrController.extractText);
-
-/**
- * @swagger
- * /api/v1/ocr/scan-invoice:
- *   post:
- *     summary: Scan invoice image for scams
- *     tags: [OCR]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               image:
- *                 type: string
- *                 format: binary
- *                 description: Invoice image
- *     responses:
- *       200:
- *         description: Invoice scanned successfully
- */
-router.post('/scan-invoice', authMiddleware, upload.single('image'), ocrController.scanInvoice);
+// OCR routes
+router.post('/upload', upload.single('invoice'), ocrController.uploadInvoice);
+router.get('/result/:id', ocrController.getOcrResult);
 
 module.exports = router;

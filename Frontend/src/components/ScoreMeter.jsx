@@ -1,131 +1,103 @@
-import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
+import React from 'react';
+import { motion } from 'framer-motion';
 
-const ScoreMeter = ({ score, size = 'lg', showLabel = true }) => {
-  const [animatedScore, setAnimatedScore] = useState(0)
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setAnimatedScore(score)
-    }, 100)
-    return () => clearTimeout(timer)
-  }, [score])
-
+const ScoreMeter = ({ score, size = 200, showLabels = true }) => {
+  const radius = size / 2 - 10;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (score / 100) * circumference;
+  
   const getColor = (score) => {
-    if (score >= 80) return '#ef4444' // red
-    if (score >= 60) return '#f97316' // orange
-    if (score >= 40) return '#eab308' // yellow
-    if (score >= 20) return '#84cc16' // lime
-    return '#22c55e' // green
-  }
+    if (score >= 70) return '#ef4444'; // Red
+    if (score >= 30) return '#f59e0b'; // Yellow
+    return '#10b981'; // Green
+  };
 
-  const getRiskLevel = (score) => {
-    if (score >= 80) return 'Critical'
-    if (score >= 60) return 'High'
-    if (score >= 40) return 'Medium'
-    if (score >= 20) return 'Low'
-    return 'Safe'
-  }
+  const getLevel = (score) => {
+    if (score >= 70) return 'Dangerous';
+    if (score >= 30) return 'Suspicious';
+    return 'Safe';
+  };
 
-  const getSizeClasses = (size) => {
-    switch (size) {
-      case 'sm':
-        return { container: 'h-16 w-16', text: 'text-lg', label: 'text-xs' }
-      case 'md':
-        return { container: 'h-24 w-24', text: 'text-2xl', label: 'text-sm' }
-      case 'lg':
-        return { container: 'h-32 w-32', text: 'text-3xl', label: 'text-base' }
-      default:
-        return { container: 'h-24 w-24', text: 'text-2xl', label: 'text-sm' }
-    }
-  }
-
-  const sizeClasses = getSizeClasses(size)
-  const color = getColor(score)
-  const riskLevel = getRiskLevel(score)
-
-  const circumference = 2 * Math.PI * 45
-  const strokeDashoffset = circumference - (animatedScore / 100) * circumference
+  const getDescription = (score) => {
+    if (score >= 70) return 'High risk detected';
+    if (score >= 30) return 'Moderate risk detected';
+    return 'Low risk detected';
+  };
 
   return (
-    <div className="relative flex flex-col items-center justify-center">
-      <div className={`relative ${sizeClasses.container}`}>
-        {/* Background circle */}
-        <svg className="absolute inset-0 w-full h-full transform -rotate-90">
-          <circle
-            cx="50%"
-            cy="50%"
-            r="45"
-            strokeWidth="8"
-            stroke="rgba(0, 0, 0, 0.1)"
-            fill="none"
-          />
-        </svg>
-
+    <div className="relative" style={{ width: size, height: size }}>
+      {/* Background circle */}
+      <svg width={size} height={size} className="transform -rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke="#e5e7eb"
+          strokeWidth="12"
+          fill="none"
+        />
+        
         {/* Animated progress circle */}
-        <svg className="absolute inset-0 w-full h-full transform -rotate-90">
-          <motion.circle
-            cx="50%"
-            cy="50%"
-            r="45"
-            strokeWidth="8"
-            stroke={color}
-            fill="none"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset}
-            initial={{ strokeDashoffset: circumference }}
-            animate={{ strokeDashoffset }}
-            transition={{
-              duration: 1.5,
-              ease: "easeOut"
-            }}
-          />
-        </svg>
+        <motion.circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={getColor(score)}
+          strokeWidth="12"
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset }}
+          transition={{ duration: 1, ease: "easeOut" }}
+        />
+      </svg>
 
-        {/* Score text */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <motion.div
-            initial={{ scale: 0.5, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.5, duration: 0.5 }}
-            className={`font-bold ${sizeClasses.text} text-gray-900 dark:text-white`}
-          >
-            {Math.round(animatedScore)}
-          </motion.div>
-          {showLabel && (
-            <div className={`font-medium ${sizeClasses.label} mt-1`}>
-              {riskLevel}
-            </div>
-          )}
-        </div>
-
-        {/* Glow effect for high risk */}
-        {score >= 60 && (
-          <div className="absolute inset-0 rounded-full animate-pulse"
-            style={{
-              boxShadow: `0 0 20px 5px ${color}40`
-            }}
-          />
-        )}
+      {/* Center content */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ delay: 0.5, type: "spring", stiffness: 200 }}
+          className="text-center"
+        >
+          <div className="text-4xl font-bold mb-1" style={{ color: getColor(score) }}>
+            {score}
+          </div>
+          <div className="text-sm text-gray-600">Risk Score</div>
+        </motion.div>
       </div>
 
-      {/* Risk indicator dots */}
-      <div className="flex items-center space-x-1 mt-4">
-        {[0, 25, 50, 75, 100].map((level) => (
-          <div
-            key={level}
-            className={`h-2 w-2 rounded-full transition-all duration-300 ${
-              score >= level ? 'opacity-100' : 'opacity-30'
-            }`}
-            style={{
-              backgroundColor: score >= level ? getColor(level) : '#9ca3af'
-            }}
-          />
-        ))}
+      {/* Labels */}
+      {showLabels && (
+        <>
+          <div className="absolute -top-2 left-1/2 transform -translate-x-1/2 text-xs text-gray-500">
+            Safe
+          </div>
+          <div className="absolute top-1/2 -right-2 transform -translate-y-1/2 text-xs text-gray-500">
+            Suspicious
+          </div>
+          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 text-xs text-gray-500">
+            Dangerous
+          </div>
+        </>
+      )}
+
+      {/* Level indicator */}
+      <div className="absolute -bottom-10 left-0 right-0 text-center">
+        <div className={`text-lg font-semibold px-4 py-2 rounded-lg inline-block ${
+          score >= 70 ? 'bg-red-50 text-red-700' :
+          score >= 30 ? 'bg-yellow-50 text-yellow-700' :
+          'bg-green-50 text-green-700'
+        }`}>
+          {getLevel(score)}
+        </div>
+        <p className="text-gray-600 text-sm mt-2">
+          {getDescription(score)}
+        </p>
       </div>
     </div>
-  )
-}
+  );
+};
 
-export default ScoreMeter
+export default ScoreMeter;

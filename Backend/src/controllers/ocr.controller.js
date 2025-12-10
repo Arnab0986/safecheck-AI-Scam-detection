@@ -1,186 +1,146 @@
+const path = require('path');
+const fs = require('fs-extra');
 const ocrService = require('../services/ocr.service');
 const scamDetector = require('../services/scamdetector.service');
 const Scan = require('../models/Scan.model');
+const User = require('../models/User.model');
 const logger = require('../utils/logger');
-const validator = require('../utils/validators');
 
-/**
- * @swagger
- * /api/v1/ocr/extract:
- *   post:
- *     summary: Extract text from image using OCR
- *     tags: [OCR]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               image:
- *                 type: string
- *                 format: binary
- *     responses:
- *       200:
- *         description: Text extracted successfully
- */
-const extractText = async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({
-      success: false,
-      error: 'No image file provided'
-    });
-  }
-
-  const userId = req.user.userId;
-
+exports.uploadInvoice = async (req, res) => {
   try {
-    // Check user's scan limit
-    const user = await require('../models/User.model').findById(userId);
-    if (!user.subscription.active) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todaysScans = await Scan.countDocuments({
-        user: userId,
-        createdAt: { $gte: today }
+    const user = req.user;
+
+    // Check if user has OCR access (premium or enterprise)
+    if (!['premium', 'enterprise'].includes(user.subscription)) {
+      return res.status(402).json({
+        success: false,
+        error: 'OCR feature requires premium subscription'
       });
-      
-      if (todaysScans >= 5) {
-        return res.status(403).json({
-          success: false,
-          error: 'Daily scan limit reached. Please subscribe for unlimited scans.'
-        });
-      }
     }
 
-    // Process image with OCR
-    const extractedText = await ocrService.processImage(req.file.path);
-    
+    // Check if user has scans left
+    if (!user.hasScansLeft()) {
+      return res.status(402).json({
+        success: false,
+        error: 'No scans left. Please upgrade your subscription.'
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No file uploaded'
+      });
+    }
+
+    // Check file type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      await fs.remove(req.file.path);
+      return res.status(400).json({
+        success: false,
+        error: 'Only JPEG, PNG, and PDF files are allowed'
+      });
+    }
+
+    // Check file size (max 10MB)
+    if (req.file.size > 10 * 1024 * 1024) {
+      await fs.remove(req.file.path);
+      return res.status(400).json({
+        success: false,
+        error: 'File size must be less than 10MB'
+      });
+    }
+
+    logger.info(`OCR processing started for user: ${user.email}, file: ${req.file.originalname}`);
+
+    // Extract text using OCR
+    const extractedText = await ocrService.extractText(req.file.path);
+
+    // Clean up uploaded file
+    await fs.remove(req.file.path);
+
     if (!extractedText || extractedText.trim().length < 10) {
       return res.status(400).json({
         success: false,
-        error: 'Could not extract sufficient text from image'
+        error: 'Could not extract sufficient text from the image'
       });
     }
 
     // Analyze extracted text for scams
-    const scanResult = await scamDetector.analyzeText(extractedText, 'ocr');
+    const result = await scamDetector.analyzeInvoice(extractedText);
 
-    // Save scan to database
-    const scan = await Scan.create({
-      user: userId,
-      type: 'ocr',
-      content: extractedText.substring(0, 1000),
-      result: scanResult,
-      riskScore: scanResult.riskScore,
-      imagePath: req.file.filename
-    });
-
-    logger.info(`OCR completed for user ${userId}, text length: ${extractedText.length}`);
-
-    res.json({
-      success: true,
-      data: {
-        extractedText,
-        scan: {
-          id: scan._id,
-          riskScore: scan.riskScore,
-          result: scan.result,
-          createdAt: scan.createdAt
-        }
+    // Create scan record
+    const scan = new Scan({
+      userId: user._id,
+      type: 'invoice',
+      content: extractedText.substring(0, 2000),
+      result: result,
+      metadata: {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        fileUrl: req.file.filename,
+        originalText: extractedText.substring(0, 1000) + (extractedText.length > 1000 ? '...' : '')
       }
     });
+
+    await scan.save();
+
+    // Use one scan from user's quota
+    await user.useScan();
+
+    logger.info(`OCR scan completed for user: ${user.email}, Score: ${result.score}`);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        scanId: scan._id,
+        extractedText: extractedText.substring(0, 500) + (extractedText.length > 500 ? '...' : ''),
+        result,
+        scansLeft: user.scansLeft
+      }
+    });
+
   } catch (error) {
-    logger.error('OCR error:', error);
+    logger.error(`OCR upload error: ${error.message}`);
+    
+    // Clean up file if it exists
+    if (req.file && req.file.path) {
+      await fs.remove(req.file.path).catch(() => {});
+    }
+    
     res.status(500).json({
       success: false,
-      error: 'Failed to process image'
+      error: 'OCR processing failed'
     });
   }
 };
 
-/**
- * @swagger
- * /api/v1/ocr/scan-invoice:
- *   post:
- *     summary: Scan invoice image for scams
- *     tags: [OCR]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               image:
- *                 type: string
- *                 format: binary
- *     responses:
- *       200:
- *         description: Invoice scanned successfully
- */
-const scanInvoice = async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({
-      success: false,
-      error: 'No image file provided'
-    });
-  }
-
-  const userId = req.user.userId;
-
+exports.getOcrResult = async (req, res) => {
   try {
-    // Extract text from invoice
-    const extractedText = await ocrService.processImage(req.file.path);
-    
-    if (!extractedText) {
-      return res.status(400).json({
+    const scan = await Scan.findOne({
+      _id: req.params.id,
+      userId: req.user._id,
+      type: 'invoice'
+    });
+
+    if (!scan) {
+      return res.status(404).json({
         success: false,
-        error: 'Could not extract text from invoice'
+        error: 'OCR result not found'
       });
     }
 
-    // Analyze specifically for invoice scams
-    const scanResult = await scamDetector.analyzeText(extractedText, 'invoice');
-
-    // Save scan
-    const scan = await Scan.create({
-      user: userId,
-      type: 'invoice',
-      content: extractedText.substring(0, 1000),
-      result: scanResult,
-      riskScore: scanResult.riskScore,
-      imagePath: req.file.filename
-    });
-
-    logger.info(`Invoice scan completed for user ${userId}`);
-
-    res.json({
+    res.status(200).json({
       success: true,
-      data: {
-        extractedText,
-        scan: {
-          id: scan._id,
-          riskScore: scan.riskScore,
-          result: scan.result,
-          createdAt: scan.createdAt
-        }
-      }
+      data: { scan }
     });
+
   } catch (error) {
-    logger.error('Invoice scan error:', error);
+    logger.error(`Get OCR result error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Failed to scan invoice'
+      error: 'Failed to get OCR result'
     });
   }
-};
-
-module.exports = {
-  extractText,
-  scanInvoice
 };

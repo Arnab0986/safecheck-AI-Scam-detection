@@ -1,234 +1,134 @@
 const Tesseract = require('tesseract.js');
-const sharp = require('sharp');
-const fs = require('fs').promises;
+const fs = require('fs-extra');
 const path = require('path');
 const logger = require('../utils/logger');
 
 class OCRService {
   constructor() {
-    this.workers = {};
-    this.tempDir = process.env.OCR_TMP_DIR || '/tmp/ocr';
-    this.language = process.env.OCR_LANGUAGE || 'eng';
-    
-    // Create temp directory if it doesn't exist
-    this.ensureTempDir();
+    this.tmpDir = process.env.OCR_TMP_DIR || '/tmp/ocr';
   }
 
-  /**
-   * Ensure temp directory exists
-   */
-  async ensureTempDir() {
+  async extractText(filePath) {
     try {
-      await fs.access(this.tempDir);
-    } catch {
-      await fs.mkdir(this.tempDir, { recursive: true });
-      logger.info(`Created OCR temp directory: ${this.tempDir}`);
-    }
-  }
-
-  /**
-   * Process image with OCR
-   */
-  async processImage(imagePath) {
-    try {
-      // Preprocess image
-      const processedImagePath = await this.preprocessImage(imagePath);
+      logger.info(`Starting OCR extraction for: ${filePath}`);
       
-      // Perform OCR
-      const result = await Tesseract.recognize(
-        processedImagePath,
-        this.language,
+      // Configure Tesseract
+      const { data: { text } } = await Tesseract.recognize(
+        filePath,
+        'eng+fra+deu+spa', // Multiple languages for better invoice recognition
         {
-          logger: m => logger.debug(`OCR: ${JSON.stringify(m)}`),
-          tessedit_pageseg_mode: Tesseract.PSM.AUTO,
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,!?@#$%^&*()-_=+[]{}|;:\'"<>/~`',
-          preserve_interword_spaces: '1'
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              logger.debug(`OCR progress: ${m.progress * 100}%`);
+            }
+          }
         }
       );
 
-      // Clean up processed image
-      await fs.unlink(processedImagePath).catch(() => {});
+      logger.info(`OCR extraction completed: ${text.length} characters extracted`);
+      
+      // Clean and normalize text
+      const cleanedText = this.cleanText(text);
+      
+      return cleanedText;
 
-      const text = result.data.text.trim();
-      logger.info(`OCR completed. Extracted ${text.length} characters`);
-
-      return text;
     } catch (error) {
-      logger.error('OCR processing error:', error);
-      throw new Error('Failed to process image with OCR');
+      logger.error(`OCR extraction error: ${error.message}`);
+      throw new Error('Failed to extract text from image');
     }
   }
 
-  /**
-   * Preprocess image for better OCR results
-   */
-  async preprocessImage(imagePath) {
-    const outputPath = path.join(this.tempDir, `processed_${Date.now()}.png`);
+  cleanText(text) {
+    if (!text) return '';
     
-    try {
-      await sharp(imagePath)
-        .greyscale() // Convert to grayscale
-        .normalize() // Normalize contrast
-        .sharpen() // Sharpen edges
-        .threshold(128) // Apply threshold for black and white
-        .toFile(outputPath);
-
-      return outputPath;
-    } catch (error) {
-      logger.error('Image preprocessing error:', error);
-      // Return original path if preprocessing fails
-      return imagePath;
-    }
-  }
-
-  /**
-   * Process multiple images
-   */
-  async processMultipleImages(imagePaths) {
-    const results = [];
+    // Remove excessive whitespace
+    let cleaned = text.replace(/\s+/g, ' ').trim();
     
-    for (const imagePath of imagePaths) {
-      try {
-        const text = await this.processImage(imagePath);
-        results.push({
-          image: path.basename(imagePath),
-          text,
-          success: true
-        });
-      } catch (error) {
-        results.push({
-          image: path.basename(imagePath),
-          text: '',
-          success: false,
-          error: error.message
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Extract specific information from OCR text
-   */
-  extractInformation(text, type = 'general') {
-    const information = {
-      text,
-      length: text.length,
-      lines: text.split('\n').filter(line => line.trim()),
-      words: text.split(/\s+/).filter(word => word),
-      sentences: text.split(/[.!?]+/).filter(sentence => sentence.trim())
-    };
-
-    // Type-specific extraction
-    switch (type) {
-      case 'invoice':
-        return this.extractInvoiceInfo(text, information);
-      case 'receipt':
-        return this.extractReceiptInfo(text, information);
-      case 'document':
-        return this.extractDocumentInfo(text, information);
-      default:
-        return information;
-    }
-  }
-
-  /**
-   * Extract invoice information
-   */
-  extractInvoiceInfo(text, baseInfo) {
-    const info = { ...baseInfo };
+    // Remove non-printable characters but keep common symbols
+    cleaned = cleaned.replace(/[^\x20-\x7E\u00A0-\u024F\u2013\u2014\u2018\u2019\u201C\u201D\u2026]/g, '');
     
-    // Common invoice patterns
-    const patterns = {
-      invoiceNumber: /\b(?:invoice|bill|receipt)[\s\S]*?(?:no|number|#)[\s:]*([A-Z0-9\-]+)\b/i,
-      date: /\b(?:date|dated)[\s:]*([0-9]{1,2}[\/\-\.][0-9]{1,2}[\/\-\.][0-9]{2,4})/i,
-      amount: /\b(?:total|amount|amt|rs|inr)[\s:]*([0-9,]+\.?[0-9]*)\b/i,
-      dueDate: /\b(?:due|payment due)[\s:]*([0-9]{1,2}[\/\-\.][0-9]{1,2}[\/\-\.][0-9]{2,4})/i,
-      company: /\b(?:from|by|company|business)[\s:]*([A-Z][A-Za-z\s&.,]+(?:inc|ltd|llp|pvt)?)\b/i
-    };
-
-    Object.entries(patterns).forEach(([key, pattern]) => {
-      const match = text.match(pattern);
-      if (match) {
-        info[key] = match[1].trim();
+    // Fix common OCR errors
+    const replacements = [
+      [/\b1\s*\/\s*O\b/g, '1/O'], // Invoice number patterns
+      [/\b(\d+)[oO]\b/g, '$10'], // Replace o with 0 in numbers
+      [/\b[A-Z]\s*[A-Z]\s*[A-Z]\b/g, match => match.replace(/\s+/g, '')], // Remove spaces in abbreviations
+      [/\b(B\s*I\s*L\s*L)\b/gi, 'BILL'],
+      [/\b(I\s*N\s*V\s*O\s*I\s*C\s*E)\b/gi, 'INVOICE'],
+      [/\b(T\s*O\s*T\s*A\s*L)\b/gi, 'TOTAL'],
+      [/\b(T\s*A\s*X)\b/gi, 'TAX'],
+      [/\b(A\s*M\s*O\s*U\s*N\s*T)\b/gi, 'AMOUNT'],
+    ];
+    
+    replacements.forEach(([pattern, replacement]) => {
+      cleaned = cleaned.replace(pattern, replacement);
+    });
+    
+    // Normalize currency symbols
+    cleaned = cleaned
+      .replace(/\$\s*(\d+)/g, '$$$1')
+      .replace(/€\s*(\d+)/g, '€$1')
+      .replace(/£\s*(\d+)/g, '£$1')
+      .replace(/₹\s*(\d+)/g, '₹$1');
+    
+    // Extract invoice-like sections (dates, amounts, totals)
+    const invoicePatterns = [
+      /\b(?:invoice|bill|receipt)\s*(?:no|number|#)?\s*[:#]?\s*([A-Z0-9\-]+)/gi,
+      /\b(?:date|issued|created)\s*[:]?\s*(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})/gi,
+      /\b(?:total|amount|balance|due)\s*[:]?\s*[$€£₹]?\s*([\d,]+(?:\.\d{2})?)/gi,
+      /\b(?:tax|vat|gst)\s*[:]?\s*[$€£₹]?\s*([\d,]+(?:\.\d{2})?)/gi,
+    ];
+    
+    // Add extracted patterns as context
+    const extractedInfo = [];
+    invoicePatterns.forEach(pattern => {
+      const matches = cleaned.match(pattern);
+      if (matches) {
+        extractedInfo.push(...matches);
       }
     });
-
-    // Extract amounts with regex
-    const amountMatches = text.match(/(?:₹|rs|inr|usd|\$)?\s*([0-9,]+(?:\.[0-9]{2})?)/gi);
-    if (amountMatches) {
-      info.allAmounts = amountMatches.map(amt => amt.trim());
-      
-      // Try to find the largest amount (likely the total)
-      const amounts = amountMatches.map(amt => {
-        const num = parseFloat(amt.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? 0 : num;
-      });
-      
-      if (amounts.length > 0) {
-        info.totalAmount = Math.max(...amounts);
-      }
+    
+    // If we found invoice-like data, prepend it for better analysis
+    if (extractedInfo.length > 0) {
+      cleaned = `INVOICE DATA EXTRACTED:\n${extractedInfo.join('\n')}\n\nFULL TEXT:\n${cleaned}`;
     }
-
-    return info;
+    
+    return cleaned;
   }
 
-  /**
-   * Extract receipt information
-   */
-  extractReceiptInfo(text, baseInfo) {
-    const info = { ...baseInfo };
-    
-    // Simple receipt patterns
-    const dateMatch = text.match(/\b([0-9]{1,2}[\/\-\.][0-9]{1,2}[\/\-\.][0-9]{2,4})\b/);
-    if (dateMatch) info.date = dateMatch[1];
-    
-    const timeMatch = text.match(/\b([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?(?:\s*[AP]M)?)\b/i);
-    if (timeMatch) info.time = timeMatch[1];
-    
-    return info;
-  }
-
-  /**
-   * Extract document information
-   */
-  extractDocumentInfo(text, baseInfo) {
-    const info = { ...baseInfo };
-    
-    // Extract potential headers (lines with few words in all caps)
-    const lines = text.split('\n');
-    info.headers = lines
-      .filter(line => {
-        const words = line.trim().split(/\s+/);
-        return words.length <= 5 && 
-               line === line.toUpperCase() && 
-               line.trim().length > 3;
-      })
-      .map(header => header.trim());
-
-    return info;
-  }
-
-  /**
-   * Clean up temporary files
-   */
-  async cleanup() {
+  async extractFromMultipleImages(filePaths) {
     try {
-      const files = await fs.readdir(this.tempDir);
-      const now = Date.now();
-      const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-
-      for (const file of files) {
-        const filePath = path.join(this.tempDir, file);
-        const stats = await fs.stat(filePath);
-        
-        if (now - stats.mtimeMs > maxAge) {
-          await fs.unlink(filePath).catch(() => {});
-        }
-      }
+      const results = await Promise.all(
+        filePaths.map(filePath => this.extractText(filePath))
+      );
+      
+      // Combine all extracted text
+      const combinedText = results.join('\n\n--- PAGE BREAK ---\n\n');
+      
+      return combinedText;
+      
     } catch (error) {
-      logger.error('OCR cleanup error:', error);
+      logger.error(`Multi-image OCR error: ${error.message}`);
+      throw new Error('Failed to extract text from multiple images');
+    }
+  }
+
+  async validateImage(filePath) {
+    try {
+      const stats = await fs.stat(filePath);
+      
+      // Check file size
+      if (stats.size > 10 * 1024 * 1024) { // 10MB
+        throw new Error('File too large');
+      }
+      
+      // Check if file exists and is readable
+      await fs.access(filePath, fs.constants.R_OK);
+      
+      return true;
+      
+    } catch (error) {
+      logger.error(`Image validation error: ${error.message}`);
+      throw new Error('Invalid image file');
     }
   }
 }

@@ -1,185 +1,250 @@
 const Scan = require('../models/Scan.model');
+const User = require('../models/User.model');
 const scamDetector = require('../services/scamdetector.service');
 const logger = require('../utils/logger');
-const validator = require('../utils/validators');
+const { scanSchema } = require('../utils/validators');
 
-/**
- * @swagger
- * /api/v1/scan/text:
- *   post:
- *     summary: Scan text for scams
- *     tags: [Scan]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - text
- *             properties:
- *               text:
- *                 type: string
- *               type:
- *                 type: string
- *                 enum: [text, job_offer, url]
- *     responses:
- *       200:
- *         description: Scan completed
- *       400:
- *         description: Validation error
- */
-const scanText = async (req, res) => {
-  const { error } = validator.validateTextScan(req.body);
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      error: error.details[0].message
-    });
-  }
-
-  const { text, type = 'text' } = req.body;
-  const userId = req.user.userId;
-
+exports.scanText = async (req, res) => {
   try {
-    // Check user's scan limit if not subscribed
-    const user = await require('../models/User.model').findById(userId);
-    if (!user.subscription.active) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todaysScans = await Scan.countDocuments({
-        user: userId,
-        createdAt: { $gte: today }
+    // Validate input
+    const { error } = scanSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        error: error.details[0].message
       });
-      
-      if (todaysScans >= 5) {
-        return res.status(403).json({
-          success: false,
-          error: 'Daily scan limit reached. Please subscribe for unlimited scans.'
-        });
-      }
     }
 
-    // Perform scan
-    const scanResult = await scamDetector.analyzeText(text, type);
+    const { text } = req.body;
+    const user = req.user;
 
-    // Save scan to database
-    const scan = await Scan.create({
-      user: userId,
-      type,
-      content: text.substring(0, 1000), // Store truncated content
-      result: scanResult,
-      riskScore: scanResult.riskScore
-    });
+    // Check if user has scans left
+    if (!user.hasScansLeft()) {
+      return res.status(402).json({
+        success: false,
+        error: 'No scans left. Please upgrade your subscription.'
+      });
+    }
 
-    logger.info(`Scan completed for user ${userId}, type: ${type}, risk: ${scanResult.riskScore}`);
+    // Perform scam detection
+    const result = await scamDetector.analyzeText(text);
 
-    res.json({
-      success: true,
-      data: {
-        scan: {
-          id: scan._id,
-          type: scan.type,
-          riskScore: scan.riskScore,
-          result: scan.result,
-          createdAt: scan.createdAt
-        }
+    // Create scan record
+    const scan = new Scan({
+      userId: user._id,
+      type: 'text',
+      content: text.substring(0, 1000), // Store first 1000 chars
+      result: result,
+      metadata: {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        originalText: text.length > 1000 ? text.substring(0, 1000) + '...' : text
       }
     });
+
+    await scan.save();
+
+    // Use one scan from user's quota
+    await user.useScan();
+
+    logger.info(`Text scan completed for user: ${user.email}, Score: ${result.score}`);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        scanId: scan._id,
+        result,
+        scansLeft: user.scansLeft
+      }
+    });
+
   } catch (error) {
-    logger.error('Scan error:', error);
+    logger.error(`Text scan error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Failed to process scan'
+      error: 'Scan failed'
     });
   }
 };
 
-/**
- * @swagger
- * /api/v1/scan/history:
- *   get:
- *     summary: Get user's scan history
- *     tags: [Scan]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 10
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *     responses:
- *       200:
- *         description: Scan history retrieved
- */
-const getScanHistory = async (req, res) => {
+exports.scanUrl = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 10;
-    const page = parseInt(req.query.page) || 1;
+    const { url } = req.body;
+    const user = req.user;
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        error: 'URL is required'
+      });
+    }
+
+    // Check if user has scans left
+    if (!user.hasScansLeft()) {
+      return res.status(402).json({
+        success: false,
+        error: 'No scans left. Please upgrade your subscription.'
+      });
+    }
+
+    // Perform URL analysis
+    const result = await scamDetector.analyzeUrl(url);
+
+    // Create scan record
+    const scan = new Scan({
+      userId: user._id,
+      type: 'url',
+      content: url,
+      result: result,
+      metadata: {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent']
+      }
+    });
+
+    await scan.save();
+
+    // Use one scan from user's quota
+    await user.useScan();
+
+    logger.info(`URL scan completed for user: ${user.email}, URL: ${url}, Score: ${result.score}`);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        scanId: scan._id,
+        result,
+        scansLeft: user.scansLeft
+      }
+    });
+
+  } catch (error) {
+    logger.error(`URL scan error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'URL scan failed'
+    });
+  }
+};
+
+exports.scanJobOffer = async (req, res) => {
+  try {
+    const { title, description, company, contact, salary } = req.body;
+    const user = req.user;
+
+    if (!description) {
+      return res.status(400).json({
+        success: false,
+        error: 'Job description is required'
+      });
+    }
+
+    // Check if user has scans left
+    if (!user.hasScansLeft()) {
+      return res.status(402).json({
+        success: false,
+        error: 'No scans left. Please upgrade your subscription.'
+      });
+    }
+
+    // Create job offer text for analysis
+    const jobText = `
+      Job Title: ${title || 'Not specified'}
+      Company: ${company || 'Not specified'}
+      Contact: ${contact || 'Not specified'}
+      Salary: ${salary || 'Not specified'}
+      Description: ${description}
+    `;
+
+    // Perform job offer analysis
+    const result = await scamDetector.analyzeJobOffer(jobText);
+
+    // Create scan record
+    const scan = new Scan({
+      userId: user._id,
+      type: 'job',
+      content: jobText.substring(0, 1000),
+      result: result,
+      metadata: {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        title,
+        company,
+        contact,
+        salary
+      }
+    });
+
+    await scan.save();
+
+    // Use one scan from user's quota
+    await user.useScan();
+
+    logger.info(`Job offer scan completed for user: ${user.email}, Score: ${result.score}`);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        scanId: scan._id,
+        result,
+        scansLeft: user.scansLeft
+      }
+    });
+
+  } catch (error) {
+    logger.error(`Job offer scan error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Job offer scan failed'
+    });
+  }
+};
+
+exports.getScanHistory = async (req, res) => {
+  try {
+    const { page = 1, limit = 20, type } = req.query;
     const skip = (page - 1) * limit;
 
-    const scans = await Scan.find({ user: req.user.userId })
+    const query = { userId: req.user._id };
+    if (type) {
+      query.type = type;
+    }
+
+    const scans = await Scan.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit)
-      .select('-__v');
+      .limit(parseInt(limit))
+      .select('-metadata.ipAddress -metadata.userAgent');
 
-    const total = await Scan.countDocuments({ user: req.user.userId });
+    const total = await Scan.countDocuments(query);
 
-    res.json({
+    res.status(200).json({
       success: true,
       data: {
         scans,
         pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
           total,
-          page,
-          limit,
           pages: Math.ceil(total / limit)
         }
       }
     });
+
   } catch (error) {
-    logger.error('Get scan history error:', error);
+    logger.error(`Get scan history error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch scan history'
+      error: 'Failed to get scan history'
     });
   }
 };
 
-/**
- * @swagger
- * /api/v1/scan/{id}:
- *   get:
- *     summary: Get specific scan result
- *     tags: [Scan]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Scan result retrieved
- *       404:
- *         description: Scan not found
- */
-const getScanById = async (req, res) => {
+exports.getScanById = async (req, res) => {
   try {
     const scan = await Scan.findOne({
       _id: req.params.id,
-      user: req.user.userId
+      userId: req.user._id
     });
 
     if (!scan) {
@@ -189,21 +254,16 @@ const getScanById = async (req, res) => {
       });
     }
 
-    res.json({
+    res.status(200).json({
       success: true,
       data: { scan }
     });
+
   } catch (error) {
-    logger.error('Get scan by ID error:', error);
+    logger.error(`Get scan by ID error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch scan'
+      error: 'Failed to get scan'
     });
   }
-};
-
-module.exports = {
-  scanText,
-  getScanHistory,
-  getScanById
 };

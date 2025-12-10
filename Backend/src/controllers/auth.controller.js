@@ -1,137 +1,101 @@
-const User = require('../models/User.model');
 const jwt = require('jsonwebtoken');
+const User = require('../models/User.model');
+const Subscription = require('../models/Subscription.model');
 const logger = require('../utils/logger');
-const validator = require('../utils/validators');
+const { registerSchema, loginSchema } = require('../utils/validators');
 
-/**
- * @swagger
- * /api/v1/auth/register:
- *   post:
- *     summary: Register a new user
- *     tags: [Authentication]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - name
- *               - email
- *               - password
- *             properties:
- *               name:
- *                 type: string
- *               email:
- *                 type: string
- *               password:
- *                 type: string
- *     responses:
- *       201:
- *         description: User registered successfully
- *       400:
- *         description: Validation error
- *       409:
- *         description: User already exists
- */
-const register = async (req, res) => {
-  const { error } = validator.validateRegister(req.body);
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      error: error.details[0].message
-    });
-  }
+const generateToken = (userId) => {
+  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '7d' });
+};
 
-  const { name, email, password } = req.body;
-
+exports.register = async (req, res) => {
   try {
-    // Check if user exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(409).json({
+    // Validate input
+    const { error } = registerSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
         success: false,
-        error: 'User with this email already exists'
+        error: error.details[0].message
       });
     }
 
-    // Create new user
-    const user = await User.create({
-      name,
+    const { email, password, name } = req.body;
+
+    // Check if user exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'User already exists'
+      });
+    }
+
+    // Create user
+    const user = new User({
       email,
-      password
+      password,
+      name
     });
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    await user.save();
 
-    logger.info(`User registered: ${email}`);
+    // Create subscription record
+    const subscription = new Subscription({
+      userId: user._id,
+      plan: 'free',
+      status: 'active',
+      features: {
+        maxScans: 10,
+        ocrEnabled: false,
+        apiAccess: false,
+        prioritySupport: false
+      }
+    });
+
+    await subscription.save();
+
+    // Generate token
+    const token = generateToken(user._id);
+
+    // Return user data (excluding password)
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    logger.info(`New user registered: ${user.email}`);
 
     res.status(201).json({
       success: true,
       data: {
+        user: userResponse,
         token,
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          subscription: user.subscription
-        }
+        subscription: subscription
       }
     });
+
   } catch (error) {
-    logger.error('Registration error:', error);
+    logger.error(`Registration error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Registration failed'
     });
   }
 };
 
-/**
- * @swagger
- * /api/v1/auth/login:
- *   post:
- *     summary: Login user
- *     tags: [Authentication]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - email
- *               - password
- *             properties:
- *               email:
- *                 type: string
- *               password:
- *                 type: string
- *     responses:
- *       200:
- *         description: Login successful
- *       401:
- *         description: Invalid credentials
- */
-const login = async (req, res) => {
-  const { error } = validator.validateLogin(req.body);
-  if (error) {
-    return res.status(400).json({
-      success: false,
-      error: error.details[0].message
-    });
-  }
-
-  const { email, password } = req.body;
-
+exports.login = async (req, res) => {
   try {
+    // Validate input
+    const { error } = loginSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        success: false,
+        error: error.details[0].message
+      });
+    }
+
+    const { email, password } = req.body;
+
     // Find user
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -140,91 +104,86 @@ const login = async (req, res) => {
     }
 
     // Check password
-    const isPasswordValid = await user.comparePassword(password);
-    if (!isPasswordValid) {
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials'
       });
     }
 
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    // Get subscription
+    const subscription = await Subscription.findOne({ userId: user._id });
 
-    logger.info(`User logged in: ${email}`);
+    // Generate token
+    const token = generateToken(user._id);
 
-    res.json({
+    // Return user data (excluding password)
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    logger.info(`User logged in: ${user.email}`);
+
+    res.status(200).json({
       success: true,
       data: {
+        user: userResponse,
         token,
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          subscription: user.subscription
-        }
+        subscription: subscription || null
       }
     });
+
   } catch (error) {
-    logger.error('Login error:', error);
+    logger.error(`Login error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Login failed'
     });
   }
 };
 
-/**
- * @swagger
- * /api/v1/auth/me:
- *   get:
- *     summary: Get current user profile
- *     tags: [Authentication]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: User profile retrieved
- *       401:
- *         description: Unauthorized
- */
-const getProfile = async (req, res) => {
+exports.getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
+    const user = await User.findById(req.user._id).select('-password');
+    const subscription = await Subscription.findOne({ userId: req.user._id });
 
-    res.json({
+    res.status(200).json({
       success: true,
       data: {
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          subscription: user.subscription,
-          createdAt: user.createdAt
-        }
+        user,
+        subscription
       }
     });
+
   } catch (error) {
-    logger.error('Get profile error:', error);
+    logger.error(`Get profile error: ${error.message}`);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Failed to get profile'
     });
   }
 };
 
-module.exports = {
-  register,
-  login,
-  getProfile
+exports.updateProfile = async (req, res) => {
+  try {
+    const { name } = req.body;
+    
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { name },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    res.status(200).json({
+      success: true,
+      data: { user }
+    });
+
+  } catch (error) {
+    logger.error(`Update profile error: ${error.message}`);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update profile'
+    });
+  }
 };
