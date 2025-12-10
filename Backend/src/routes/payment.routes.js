@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const paymentController = require('../controllers/payment.controller');
+
+// FIXED: correct case-sensitive folder name
+const paymentController = require('../Controllers/payment.controller');
+
 const { paymentLimiter } = require('../middleware/rateLimit.middleware');
 const authMiddleware = require('../middleware/auth.middleware');
 
