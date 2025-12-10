@@ -1,50 +1,68 @@
-const crypto = require('crypto');
-const User = require('../models/User.model');
-const Subscription = require('../models/Subscription.model');
-const cashfreeService = require('../services/cashfree.service');
-const logger = require('../utils/logger');
+// Add these production-specific functions
 
-exports.createOrder = async (req, res) => {
+exports.createProductionOrder = async (req, res) => {
   try {
-    const { plan, amount } = req.body;
+    const { plan, amount, customerPhone } = req.body;
     const user = req.user;
 
-    // Validate plan
-    const validPlans = ['basic', 'premium', 'enterprise'];
-    if (!validPlans.includes(plan)) {
+    // Validate plan and amount
+    const validPlans = {
+      basic: 49900,
+      premium: 149900,
+      enterprise: 499900
+    };
+
+    if (!validPlans[plan]) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid plan'
+        error: 'Invalid plan selected'
       });
     }
 
-    // Create order in Cashfree
+    if (amount !== validPlans[plan]) {
+      return res.status(400).json({
+        success: false,
+        error: 'Amount does not match selected plan'
+      });
+    }
+
+    // Generate unique order ID
+    const orderId = `ORDER_${Date.now()}_${user._id.toString().slice(-6)}`;
+    
+    // Prepare order data
     const orderData = {
-      orderId: `ORDER_${Date.now()}_${user._id}`,
-      orderAmount: amount,
-      orderCurrency: 'INR',
-      orderNote: `SafeCheck ${plan} subscription`,
+      orderId: orderId,
+      orderAmount: amount.toString(), // Amount in paise as string
       customerDetails: {
         customerId: user._id.toString(),
         customerEmail: user.email,
-        customerPhone: '9999999999'
+        customerPhone: customerPhone || '9999999999',
+        customerName: user.name
       },
       orderMeta: {
-        returnUrl: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/subscription/success?order_id={order_id}`
+        plan: plan,
+        returnUrl: `${process.env.CASHFREE_RETURN_URL}?order_id=${orderId}`,
+        notifyUrl: process.env.CASHFREE_WEBHOOK_NOTIFY_URL
       }
     };
 
-    const order = await cashfreeService.createOrder(orderData);
+    // Create order in Cashfree
+    const result = await cashfreeService.createOrder(orderData);
 
-    // Update user subscription status
+    if (!result.success) {
+      throw new Error('Failed to create order with payment gateway');
+    }
+
+    // Save order reference in database
     const subscription = await Subscription.findOneAndUpdate(
       { userId: user._id },
       {
-        plan,
+        plan: plan,
         status: 'pending',
-        cashfreeOrderId: orderData.orderId,
+        cashfreeOrderId: orderId,
+        cashfreePaymentSessionId: result.data.payment_session_id,
         paymentDetails: {
-          amount,
+          amount: amount / 100, // Convert paise to rupees for display
           currency: 'INR'
         },
         features: getPlanFeatures(plan)
@@ -52,202 +70,162 @@ exports.createOrder = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    logger.info(`Order created for user ${user.email}: ${orderData.orderId}`);
+    // Update user
+    await User.findByIdAndUpdate(user._id, {
+      subscription: plan,
+      cashfreeOrderId: orderId
+    });
+
+    logger.info(`Production order created for user ${user.email}: ${orderId}`);
 
     res.status(200).json({
       success: true,
       data: {
-        order,
-        subscription
+        order: result.data,
+        subscription: subscription,
+        paymentUrl: result.data.payment_url
       }
     });
 
   } catch (error) {
-    logger.error(`Create order error: ${error.message}`);
+    logger.error(`Create production order error: ${error.message}`);
+    
     res.status(500).json({
       success: false,
-      error: 'Failed to create order'
+      error: 'Payment initialization failed',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-exports.verifyPayment = async (req, res) => {
-  try {
-    const { orderId } = req.body;
-    const user = req.user;
-
-    // Verify payment with Cashfree
-    const paymentStatus = await cashfreeService.verifyPayment(orderId);
-
-    if (paymentStatus === 'PAID') {
-      // Update subscription
-      const subscription = await Subscription.findOneAndUpdate(
-        { userId: user._id, cashfreeOrderId: orderId },
-        {
-          status: 'active',
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
-          'paymentDetails.transactionId': orderId
-        },
-        { new: true }
-      );
-
-      // Update user
-      await User.findByIdAndUpdate(user._id, {
-        subscription: subscription.plan,
-        subscriptionExpiry: subscription.endDate,
-        scansLeft: subscription.features.maxScans
-      });
-
-      logger.info(`Payment verified for user ${user.email}: ${orderId}`);
-
-      res.status(200).json({
-        success: true,
-        data: {
-          status: 'success',
-          subscription
-        }
-      });
-    } else {
-      res.status(400).json({
-        success: false,
-        data: {
-          status: 'failed',
-          message: 'Payment not successful'
-        }
-      });
-    }
-
-  } catch (error) {
-    logger.error(`Verify payment error: ${error.message}`);
-    res.status(500).json({
-      success: false,
-      error: 'Payment verification failed'
-    });
-  }
-};
-
-exports.handleWebhook = async (req, res) => {
+// Enhanced webhook handler for production
+exports.handleProductionWebhook = async (req, res) => {
   try {
     const signature = req.headers['x-cashfree-signature'];
     const payload = JSON.stringify(req.body);
 
     // Verify webhook signature
-    const secret = process.env.CASHFREE_SECRET;
-    const expectedSignature = crypto
-      .createHmac('sha256', secret)
-      .update(payload)
-      .digest('base64');
-
-    if (signature !== expectedSignature) {
-      logger.error('Invalid webhook signature');
-      return res.status(401).json({ success: false });
+    if (!cashfreeService.verifyWebhookSignature(payload, signature)) {
+      logger.error('Invalid webhook signature received');
+      return res.status(401).json({ success: false, error: 'Invalid signature' });
     }
 
     const event = req.body;
-    
-    // Handle different webhook events
+    logger.info(`Webhook received: ${event.event_type}`, { 
+      orderId: event.data?.order?.order_id,
+      timestamp: new Date().toISOString()
+    });
+
+    // Handle different event types
     switch (event.event_type) {
       case 'PAYMENT_SUCCESS_WEBHOOK':
-        await handlePaymentSuccess(event);
+        await handlePaymentSuccess(event.data);
         break;
+        
+      case 'PAYMENT_FAILED_WEBHOOK':
+        await handlePaymentFailed(event.data);
+        break;
+        
       case 'REFUND_SUCCESS_WEBHOOK':
-        await handleRefundSuccess(event);
+        await handleRefundSuccess(event.data);
         break;
+        
+      case 'SUBSCRIPTION_ACTIVATED':
+        await handleSubscriptionActivated(event.data);
+        break;
+        
       case 'SUBSCRIPTION_CANCELLED':
-        await handleSubscriptionCancelled(event);
+        await handleSubscriptionCancelled(event.data);
         break;
+        
+      default:
+        logger.info(`Unhandled webhook event: ${event.event_type}`);
     }
 
+    // Always respond with 200 to acknowledge receipt
     res.status(200).json({ success: true });
 
   } catch (error) {
-    logger.error(`Webhook error: ${error.message}`);
-    res.status(500).json({ success: false });
+    logger.error(`Webhook processing error: ${error.message}`, {
+      event: req.body?.event_type
+    });
+    res.status(500).json({ success: false, error: 'Webhook processing failed' });
   }
 };
 
-async function handlePaymentSuccess(event) {
-  const { orderId } = event.data.order;
+// Handle payment success
+async function handlePaymentSuccess(eventData) {
+  const { order } = eventData;
   
-  // Find subscription by orderId
-  const subscription = await Subscription.findOne({ cashfreeOrderId: orderId });
-  if (subscription) {
+  try {
+    // Find subscription by order ID
+    const subscription = await Subscription.findOne({ 
+      cashfreeOrderId: order.order_id 
+    });
+    
+    if (!subscription) {
+      logger.error(`Subscription not found for order: ${order.order_id}`);
+      return;
+    }
+
+    // Update subscription status
     subscription.status = 'active';
     subscription.startDate = new Date();
-    subscription.endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-    subscription.paymentDetails.transactionId = event.data.order.transactionId;
+    subscription.endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+    subscription.paymentDetails.transactionId = order.cf_order_id;
+    subscription.paymentDetails.paymentMethod = order.payment_method;
+    subscription.paymentDetails.paymentTime = new Date();
+    
     await subscription.save();
 
     // Update user
     await User.findByIdAndUpdate(subscription.userId, {
       subscription: subscription.plan,
       subscriptionExpiry: subscription.endDate,
-      scansLeft: subscription.features.maxScans
+      scansLeft: subscription.features.maxScans,
+      cashfreeCustomerId: order.customer_details?.customer_id
     });
 
-    logger.info(`Webhook: Payment success for order ${orderId}`);
+    // Send confirmation email (implement email service)
+    await sendPaymentConfirmationEmail(subscription.userId, order);
+
+    logger.info(`Payment successful for order: ${order.order_id}`);
+
+  } catch (error) {
+    logger.error(`Error processing payment success: ${error.message}`, {
+      orderId: order.order_id
+    });
   }
 }
 
-async function handleRefundSuccess(event) {
-  const { orderId } = event.data.order;
+// Handle payment failure
+async function handlePaymentFailed(eventData) {
+  const { order } = eventData;
   
-  const subscription = await Subscription.findOneAndUpdate(
-    { cashfreeOrderId: orderId },
-    { status: 'cancelled' },
-    { new: true }
-  );
+  try {
+    const subscription = await Subscription.findOneAndUpdate(
+      { cashfreeOrderId: order.order_id },
+      { 
+        status: 'failed',
+        paymentDetails: {
+          ...subscription.paymentDetails,
+          failureReason: order.payment_failure_reason,
+          failureTime: new Date()
+        }
+      },
+      { new: true }
+    );
 
-  if (subscription) {
-    await User.findByIdAndUpdate(subscription.userId, {
-      subscription: 'free',
-      subscriptionExpiry: null
-    });
-
-    logger.info(`Webhook: Refund processed for order ${orderId}`);
-  }
-}
-
-async function handleSubscriptionCancelled(event) {
-  const { subscriptionId } = event.data;
-  
-  const subscription = await Subscription.findOneAndUpdate(
-    { cashfreeSubscriptionId: subscriptionId },
-    { status: 'cancelled' },
-    { new: true }
-  );
-
-  if (subscription) {
-    await User.findByIdAndUpdate(subscription.userId, {
-      subscription: 'free',
-      subscriptionExpiry: null
-    });
-
-    logger.info(`Webhook: Subscription cancelled ${subscriptionId}`);
-  }
-}
-
-function getPlanFeatures(plan) {
-  const features = {
-    basic: {
-      maxScans: 100,
-      ocrEnabled: true,
-      apiAccess: false,
-      prioritySupport: false
-    },
-    premium: {
-      maxScans: 1000,
-      ocrEnabled: true,
-      apiAccess: true,
-      prioritySupport: true
-    },
-    enterprise: {
-      maxScans: 10000,
-      ocrEnabled: true,
-      apiAccess: true,
-      prioritySupport: true
+    if (subscription) {
+      // Notify user about payment failure
+      await sendPaymentFailureEmail(subscription.userId, order);
+      
+      logger.info(`Payment failed for order: ${order.order_id}`, {
+        reason: order.payment_failure_reason
+      });
     }
-  };
-  return features[plan] || features.basic;
+
+  } catch (error) {
+    logger.error(`Error processing payment failure: ${error.message}`);
+  }
 }
