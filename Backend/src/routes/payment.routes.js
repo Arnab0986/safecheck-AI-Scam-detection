@@ -1,20 +1,19 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
-// FIXED: correct case-sensitive folder name
-const paymentController = require('../Controllers/payment.controller');
+const paymentController = require("../controllers/payment.controller"); // FIXED CASE
 
-const { paymentLimiter } = require('../middleware/rateLimit.middleware');
-const authMiddleware = require('../middleware/auth.middleware');
+const { paymentLimiter } = require("../middleware/rateLimit.middleware");
+const authMiddleware = require("../middleware/auth.middleware");
 
-// Webhook doesn't require auth (handled by signature verification)
-router.post('/webhook', paymentController.handleWebhook);
+// Public webhook
+router.post("/webhook", paymentController.handleProductionWebhook);
 
-// Protected routes
+// Protected
 router.use(authMiddleware);
 router.use(paymentLimiter);
 
-router.post('/create-order', paymentController.createOrder);
-router.post('/verify', paymentController.verifyPayment);
+router.post("/create-order", paymentController.createProductionOrder);
+router.post("/verify", paymentController.verifyPayment);
 
 module.exports = router;
