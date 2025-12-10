@@ -6,6 +6,7 @@ import { Loader } from 'lucide-react';
 const ProtectedRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
 
+  // Wait until AuthContext loads token from localStorage
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -17,8 +18,13 @@ const ProtectedRoute = ({ children }) => {
     );
   }
 
+  // After loading, check auth
+  if (isAuthenticated === null) {
+    return null;  // Prevent blank screen flicker
+  }
+
   if (!isAuthenticated) {
-    return <Navigate to="/login" />;
+    return <Navigate to="/login" replace />;
   }
 
   return children;
