@@ -1,3 +1,4 @@
+// src/App.jsx
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
@@ -9,6 +10,10 @@ import Footer from './components/Footer';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import VerifyPayment from './pages/VerifyPayment';
+
 import Dashboard from './pages/Dashboard';
 import JobOfferChecker from './pages/JobOfferChecker';
 import InvoiceOCR from './pages/InvoiceOCR';
@@ -23,11 +28,15 @@ function App() {
         <Navbar />
         <main className="container mx-auto px-4 py-8">
           <Routes>
+            {/* Public */}
             <Route path="/" element={<Home />} />
-
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/verify-payment" element={<VerifyPayment />} />
 
+            {/* Protected */}
             <Route
               path="/dashboard"
               element={
@@ -36,7 +45,6 @@ function App() {
                 </ProtectedRoute>
               }
             />
-
             <Route
               path="/job-checker"
               element={
@@ -45,7 +53,6 @@ function App() {
                 </ProtectedRoute>
               }
             />
-
             <Route
               path="/invoice-ocr"
               element={
@@ -54,7 +61,6 @@ function App() {
                 </ProtectedRoute>
               }
             />
-
             <Route
               path="/subscription"
               element={

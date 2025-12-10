@@ -1,3 +1,4 @@
+// src/pages/Login.jsx
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -9,16 +10,29 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
     setLoading(true);
-    
-    const result = await login(email, password);
-    
-    if (!result.success) {
+
+    try {
+      // ask the context to not auto-redirect so we control navigation here
+      const result = await login(email, password, { redirect: false });
+
+      if (!result.success) {
+        setError(result.error || 'Login failed. Please check your credentials.');
+        setLoading(false);
+        return;
+      }
+
+      // success — navigate to dashboard (or any other route)
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err?.message || 'An unexpected error occurred.');
       setLoading(false);
     }
   };
@@ -37,130 +51,80 @@ const Login = () => {
             <img src="/logo.png" alt="SafeCheck" className="h-16 w-16" />
           </div>
           <h2 className="text-3xl font-bold">Welcome Back</h2>
-          <p className="mt-2 text-gray-600">
-            Sign in to your SafeCheck account
-          </p>
+          <p className="mt-2 text-gray-600">Sign in to your SafeCheck account</p>
         </div>
 
-        {/* Login Form */}
-        <form onSubmit={handleSubmit} className="card space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Mail className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="input-field pl-10"
-                placeholder="you@example.com"
-                required
-              />
+                {/* Login Form */}
+                <form onSubmit={handleSubmit} className="card space-y-6">
+                  {error && <div className="text-red-600 text-sm">{error}</div>}
+        
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Email Address
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center">
+                        <Mail className="h-5 w-5 text-gray-400" />
+                      </div>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="you@example.com"
+                      />
+                    </div>
+                  </div>
+        
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Password
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center">
+                        <Lock className="h-5 w-5 text-gray-400" />
+                      </div>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        className="block w-full pl-10 pr-10 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="••••••••"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-5 w-5 text-gray-400" />
+                        ) : (
+                          <Eye className="h-5 w-5 text-gray-400" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+        
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-blue-600 text-white py-2 rounded-md font-medium hover:bg-blue-700 disabled:bg-gray-400"
+                  >
+                    {loading ? 'Signing in...' : 'Sign In'}
+                  </button>
+                </form>
+        
+                <p className="text-center text-sm text-gray-600">
+                  Don't have an account?{' '}
+                  <Link to="/register" className="text-blue-600 hover:text-blue-700 font-medium">
+                    Sign up
+                  </Link>
+                </p>
+              </motion.div>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Lock className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="input-field pl-10 pr-10"
-                placeholder="••••••••"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center"
-              >
-                {showPassword ? (
-                  <EyeOff className="h-5 w-5 text-gray-400" />
-                ) : (
-                  <Eye className="h-5 w-5 text-gray-400" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <input
-                id="remember-me"
-                type="checkbox"
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-700">
-                Remember me
-              </label>
-            </div>
-            <Link to="#" className="text-sm text-blue-600 hover:text-blue-500">
-              Forgot password?
-            </Link>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full btn-primary flex items-center justify-center space-x-2"
-          >
-            {loading ? (
-              <>
-                <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Signing in...</span>
-              </>
-            ) : (
-              <>
-                <Shield size={20} />
-                <span>Sign In</span>
-              </>
-            )}
-          </button>
-
-          <div className="text-center">
-            <p className="text-gray-600">
-              Don't have an account?{' '}
-              <Link to="/register" className="text-blue-600 hover:text-blue-500 font-medium">
-                Sign up
-              </Link>
-            </p>
-          </div>
-        </form>
-
-        {/* Features */}
-        <div className="grid grid-cols-3 gap-4 mt-8">
-          <div className="text-center">
-            <div className="h-12 w-12 bg-blue-100 rounded-xl flex items-center justify-center mx-auto mb-2">
-              <Shield className="text-blue-600" size={24} />
-            </div>
-            <p className="text-sm text-gray-600">Secure</p>
-          </div>
-          <div className="text-center">
-            <div className="h-12 w-12 bg-green-100 rounded-xl flex items-center justify-center mx-auto mb-2">
-              <Shield className="text-green-600" size={24} />
-            </div>
-            <p className="text-sm text-gray-600">Reliable</p>
-          </div>
-          <div className="text-center">
-            <div className="h-12 w-12 bg-purple-100 rounded-xl flex items-center justify-center mx-auto mb-2">
-              <Shield className="text-purple-600" size={24} />
-            </div>
-            <p className="text-sm text-gray-600">Fast</p>
-          </div>
-        </div>
-      </motion.div>
-    </div>
-  );
-};
-
-export default Login;
+          );
+        };
+        
+        export default Login;

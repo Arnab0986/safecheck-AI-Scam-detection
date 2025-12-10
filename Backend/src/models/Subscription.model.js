@@ -1,66 +1,56 @@
-const mongoose = require('mongoose');
+// models/Subscription.model.js
+const mongoose = require("mongoose");
 
-const subscriptionSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    unique: true
-  },
-  plan: {
-    type: String,
-    enum: ['free', 'basic', 'premium', 'enterprise'],
-    default: 'free'
-  },
-  cashfreeSubscriptionId: {
-    type: String
-  },
-  cashfreeOrderId: {
-    type: String
-  },
-  status: {
-    type: String,
-    enum: ['active', 'inactive', 'cancelled', 'pending'],
-    default: 'inactive'
-  },
-  startDate: {
-    type: Date,
-    default: Date.now
-  },
-  endDate: {
-    type: Date
-  },
-  paymentDetails: {
-    amount: Number,
-    currency: {
-      type: String,
-      default: 'INR'
+const SubscriptionSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      unique: true, // one subscription per user
     },
-    paymentMethod: String,
-    transactionId: String
-  },
-  features: {
-    maxScans: Number,
-    ocrEnabled: Boolean,
-    apiAccess: Boolean,
-    prioritySupport: Boolean
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
-});
 
-// Update timestamp
-subscriptionSchema.pre('save', function(next) {
+    plan: {
+      type: String,
+      enum: ["free", "basic", "premium", "enterprise"],
+      default: "free",
+    },
+
+    status: {
+      type: String,
+      enum: ["inactive", "pending", "active", "failed", "cancelled"],
+      default: "inactive",
+    },
+
+    cashfreeOrderId: String,
+    cashfreePaymentSessionId: String,
+    cashfreeSubscriptionId: String,
+
+    startDate: Date,
+    endDate: Date,
+
+    paymentDetails: {
+      amount: Number,
+      currency: { type: String, default: "INR" },
+      paymentMethod: String,
+      transactionId: String,
+      failureReason: String,
+      paymentTime: Date,
+    },
+
+    features: {
+      maxScans: Number,
+      ocrEnabled: Boolean,
+      apiAccess: Boolean,
+      prioritySupport: Boolean,
+    },
+  },
+  { timestamps: true }
+);
+
+SubscriptionSchema.pre("save", function (next) {
   this.updatedAt = Date.now();
   next();
 });
 
-const Subscription = mongoose.model('Subscription', subscriptionSchema);
-
-module.exports = Subscription;
+module.exports = mongoose.model("Subscription", SubscriptionSchema);

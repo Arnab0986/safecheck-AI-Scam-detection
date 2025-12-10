@@ -1,19 +1,13 @@
 const express = require("express");
 const router = express.Router();
+const paymentController = require("../controllers/payment.controller");
+const auth = require("../middleware/auth.middleware");
 
-const paymentController = require("../controllers/payment.controller"); // FIXED CASE
-
-const { paymentLimiter } = require("../middleware/rateLimit.middleware");
-const authMiddleware = require("../middleware/auth.middleware");
-
-// Public webhook
+// Webhook MUST use raw body → NO auth
 router.post("/webhook", paymentController.handleProductionWebhook);
 
-// Protected
-router.use(authMiddleware);
-router.use(paymentLimiter);
-
-router.post("/create-order", paymentController.createProductionOrder);
-router.post("/verify", paymentController.verifyPayment);
+// Protected user requests
+router.post("/create-order", auth, paymentController.createProductionOrder);
+router.post("/verify", auth, paymentController.verifyPayment);
 
 module.exports = router;

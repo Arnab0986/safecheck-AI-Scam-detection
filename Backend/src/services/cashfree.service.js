@@ -1,3 +1,4 @@
+// services/CashfreeService.js
 const axios = require('axios');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
@@ -5,289 +6,245 @@ const logger = require('../utils/logger');
 class CashfreeService {
   constructor() {
     this.appId = process.env.CASHFREE_APP_ID;
-    this.secret = process.env.CASHFREE_SECRET;
-    this.mode = process.env.CASHFREE_MODE || 'PROD';
-    
-    // Production endpoints
-    this.baseUrl = 'https://api.cashfree.com/pg';
-    this.checkoutUrl = 'https://pay.cashfree.com';
-    
-    this.headers = {
+    this.secret = process.env.CASHFREE_SECRET || process.env.CASHFREE_SECRET_KEY;
+    this.mode = (process.env.CASHFREE_MODE || 'PROD').toUpperCase();
+
+    // Choose endpoints based on mode
+    if (this.mode === 'SANDBOX' || this.mode === 'TEST') {
+      this.baseUrl = 'https://sandbox.cashfree.com/pg';
+      this.checkoutUrl = 'https://sandbox.cashfree.com';
+    } else {
+      this.baseUrl = 'https://api.cashfree.com/pg';
+      this.checkoutUrl = 'https://pay.cashfree.com';
+    }
+
+    this.defaultHeaders = {
       'Content-Type': 'application/json',
       'x-api-version': '2022-09-01',
       'x-client-id': this.appId,
-      'x-client-secret': this.secret
+      'x-client-secret': this.secret,
     };
   }
 
+  // Internal request helper
+  async _post(path, data, opts = {}) {
+    const url = `${this.baseUrl}${path}`;
+    const headers = { ...this.defaultHeaders, ...(opts.headers || {}) };
+    try {
+      const res = await axios.post(url, data, { headers, timeout: opts.timeout || 15000 });
+      return res.data;
+    } catch (err) {
+      logger.error(`Cashfree POST ${url} error`, {
+        message: err.message,
+        status: err.response?.status,
+        data: err.response?.data,
+      });
+      throw err;
+    }
+  }
+
+  async _get(path, opts = {}) {
+    const url = `${this.baseUrl}${path}`;
+    const headers = { ...this.defaultHeaders, ...(opts.headers || {}) };
+    try {
+      const res = await axios.get(url, { headers, timeout: opts.timeout || 10000 });
+      return res.data;
+    } catch (err) {
+      logger.error(`Cashfree GET ${url} error`, {
+        message: err.message,
+        status: err.response?.status,
+        data: err.response?.data,
+      });
+      throw err;
+    }
+  }
+
+  // Create an order and return payment_url + gateway response
   async createOrder(orderData) {
     try {
-      // Validate required fields
-      const requiredFields = ['orderId', 'orderAmount', 'customerDetails'];
-      requiredFields.forEach(field => {
-        if (!orderData[field]) {
-          throw new Error(`Missing required field: ${field}`);
-        }
+      const required = ['orderId', 'orderAmount', 'customerDetails'];
+      required.forEach((f) => {
+        if (!orderData[f]) throw new Error(`Missing required field: ${f}`);
       });
 
-      // Add additional production parameters
-      const productionOrderData = {
-        ...orderData,
-        orderCurrency: 'INR',
-        orderNote: `SafeCheck Subscription - ${orderData.orderId}`,
-        customerDetails: {
-          customerId: orderData.customerDetails.customerId,
-          customerEmail: orderData.customerDetails.customerEmail,
-          customerPhone: orderData.customerDetails.customerPhone || '9999999999',
-          customerName: orderData.customerDetails.customerName
+      const expiry = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
+      const payload = {
+        order_id: orderData.orderId,
+        order_amount: orderData.orderAmount.toString(),
+        order_currency: 'INR',
+        order_note: orderData.orderNote || `SafeCheck Subscription - ${orderData.orderId}`,
+        customer_details: {
+          customer_id: orderData.customerDetails.customerId,
+          customer_email: orderData.customerDetails.customerEmail,
+          customer_phone: orderData.customerDetails.customerPhone || '9999999999',
+          customer_name: orderData.customerDetails.customerName || 'Customer',
         },
-        orderMeta: {
-          returnUrl: `${process.env.CASHFREE_RETURN_URL}?order_id={order_id}`,
-          notifyUrl: process.env.CASHFREE_WEBHOOK_NOTIFY_URL,
-          paymentMethods: 'cc,dc,upi,nb,wallet,paylater'
+        order_meta: {
+          return_url: `${(process.env.CASHFREE_RETURN_URL || '').replace(/\/$/, '')}?order_id={order_id}`,
+          notify_url: process.env.CASHFREE_WEBHOOK_NOTIFY_URL,
+          payment_methods: 'cc,dc,upi,nb,wallet,paylater',
+          ...(orderData.orderMeta || {}),
         },
-        orderExpiryTime: '2029-03-10T12:00:00Z', // Set expiry to 30 minutes from now
-        orderTags: {
-          subscription: 'true',
-          plan: orderData.orderMeta?.plan || 'basic'
-        }
+        order_expiry_time: expiry,
+        order_tags: { subscription: 'true', plan: orderData.plan || orderData.orderMeta?.plan || 'basic' },
       };
 
-      logger.info(`Creating Cashfree order: ${productionOrderData.orderId}`);
-      
-      const response = await axios.post(
-        `${this.baseUrl}/orders`,
-        productionOrderData,
-        {
-          headers: this.headers,
-          timeout: 10000 // 10 second timeout
-        }
-      );
+      logger.info('Creating Cashfree order', { mode: this.mode, orderId: payload.order_id });
 
-      if (response.data.payment_session_id) {
-        logger.info(`Order created successfully: ${productionOrderData.orderId}`);
-        return {
-          success: true,
-          data: {
-            ...response.data,
-            payment_url: `${this.checkoutUrl}/pay/${response.data.payment_session_id}`
-          }
-        };
-      } else {
+      const data = await this._post('/orders', payload);
+
+      // Cashfree responses may vary by mode/version
+      const paymentSessionId = data.payment_session_id || data.order_id || data.data?.payment_session_id;
+      const paymentUrl = paymentSessionId ? `${this.checkoutUrl}/pay/${paymentSessionId}` : null;
+
+      if (!paymentSessionId) {
+        logger.error('Unexpected create order response', { response: data });
         throw new Error('Failed to create payment session');
       }
 
-    } catch (error) {
-      logger.error(`Cashfree create order error: ${error.message}`, {
-        orderId: orderData?.orderId,
-        status: error.response?.status,
-        data: error.response?.data
-      });
-      
-      // Handle specific error cases
-      if (error.response?.status === 401) {
-        throw new Error('Invalid Cashfree credentials');
-      } else if (error.response?.status === 400) {
-        throw new Error(`Validation error: ${JSON.stringify(error.response.data)}`);
-      } else if (error.code === 'ECONNABORTED') {
-        throw new Error('Request timeout. Please try again.');
-      }
-      
-      throw new Error(`Payment gateway error: ${error.message}`);
+      return {
+        success: true,
+        data: {
+          raw: data,
+          payment_session_id: paymentSessionId,
+          payment_url: paymentUrl,
+        },
+      };
+    } catch (err) {
+      // map common errors
+      if (err.response?.status === 401) throw new Error('Invalid Cashfree credentials');
+      if (err.code === 'ECONNABORTED') throw new Error('Payment request timed out');
+      // bubble up message
+      throw new Error(err.response?.data?.message || err.message || 'Cashfree createOrder failed');
     }
   }
 
+  // Verify payment status for an order
   async verifyPayment(orderId) {
     try {
-      const response = await axios.get(
-        `${this.baseUrl}/orders/${orderId}`,
-        {
-          headers: this.headers,
-          timeout: 5000
-        }
-      );
+      if (!orderId) throw new Error('orderId required');
 
-      const order = response.data;
-      
-      // Detailed status check
-      if (order.order_status === 'PAID') {
-        return {
-          status: 'PAID',
-          order: order,
-          paymentDetails: order.payment_details
-        };
-      } else if (order.order_status === 'ACTIVE') {
-        return {
-          status: 'PENDING',
-          order: order
-        };
-      } else {
-        return {
-          status: 'FAILED',
-          order: order,
-          reason: order.order_status
-        };
+      const data = await this._get(`/orders/${orderId}`);
+
+      // Cashfree v1/v2 may return order object under 'order' or directly
+      const order = data.order || data || {};
+
+      // try find status
+      const rawStatus = (order.order_status || order.status || order.orderStatus || '').toString().toUpperCase();
+
+      // Normalize
+      if (rawStatus.includes('PAID') || rawStatus === 'SUCCESS') {
+        return { status: 'PAID', order, paymentDetails: order.payment_details || order.payments || null };
       }
 
-    } catch (error) {
-      logger.error(`Cashfree verify payment error: ${error.message}`, {
-        orderId,
-        status: error.response?.status
-      });
-      
-      return {
-        status: 'ERROR',
-        error: error.message
-      };
+      if (rawStatus.includes('ACTIVE') || rawStatus.includes('PENDING')) {
+        return { status: 'PENDING', order };
+      }
+
+      // any other statuses we treat as failed
+      return { status: 'FAILED', order, reason: rawStatus || 'UNKNOWN' };
+    } catch (err) {
+      logger.error('Cashfree verifyPayment error', { orderId, message: err.message });
+      return { status: 'ERROR', error: err.response?.data || err.message || 'Failed to verify payment' };
     }
   }
 
+  // Get payment methods (with fallback)
   async getPaymentMethods() {
     try {
-      const response = await axios.get(
-        `${this.baseUrl}/payment-methods`,
-        {
-          headers: this.headers,
-          timeout: 5000
-        }
-      );
-
-      return response.data;
-
-    } catch (error) {
-      logger.error(`Get payment methods error: ${error.message}`);
-      
-      // Return default payment methods if API fails
+      const data = await this._get('/payment-methods');
+      return data;
+    } catch (err) {
+      logger.warn('Falling back to default payment methods due to API error');
       return {
         netbanking: [
           { bank_name: 'HDFC Bank', bank_code: 'HDFC' },
           { bank_name: 'ICICI Bank', bank_code: 'ICIC' },
           { bank_name: 'Axis Bank', bank_code: 'UTIB' },
-          { bank_name: 'State Bank of India', bank_code: 'SBIN' }
+          { bank_name: 'State Bank of India', bank_code: 'SBIN' },
         ],
         card: { channel: 'card' },
         upi: { channel: 'upi' },
-        wallet: [
-          { channel: 'phonepe' },
-          { channel: 'paytm' },
-          { channel: 'amazonpay' }
-        ]
+        wallet: [{ channel: 'phonepe' }, { channel: 'paytm' }, { channel: 'amazonpay' }],
       };
     }
   }
 
+  // Refunds
   async refundPayment(orderId, refundId, amount, reason = 'Refund for SafeCheck subscription') {
     try {
-      const response = await axios.post(
-        `${this.baseUrl}/orders/${orderId}/refunds`,
-        {
-          refund_amount: amount,
-          refund_id: refundId,
-          refund_note: reason,
-          refund_type: 'MERCHANT_INITIATED'
-        },
-        {
-          headers: this.headers,
-          timeout: 10000
-        }
-      );
+      if (!orderId || !refundId || !amount) throw new Error('orderId, refundId and amount are required');
 
-      logger.info(`Refund initiated: ${refundId} for order ${orderId}`);
-      
-      return {
-        success: true,
-        data: response.data
+      const payload = {
+        refund_amount: amount,
+        refund_id: refundId,
+        refund_note: reason,
+        refund_type: 'MERCHANT_INITIATED',
       };
 
-    } catch (error) {
-      logger.error(`Cashfree refund error: ${error.message}`, {
-        orderId,
-        refundId,
-        amount
-      });
-      
-      throw new Error(`Refund failed: ${error.response?.data?.message || error.message}`);
+      const data = await this._post(`/orders/${orderId}/refunds`, payload, { timeout: 20000 });
+      logger.info('Refund initiated', { orderId, refundId });
+      return { success: true, data };
+    } catch (err) {
+      logger.error('Cashfree refundPayment error', { orderId, refundId, amount, message: err.message });
+      throw new Error(err.response?.data?.message || err.message || 'Refund failed');
     }
   }
 
   async getRefundStatus(orderId, refundId) {
     try {
-      const response = await axios.get(
-        `${this.baseUrl}/orders/${orderId}/refunds/${refundId}`,
-        {
-          headers: this.headers,
-          timeout: 5000
-        }
-      );
-
-      return response.data;
-
-    } catch (error) {
-      logger.error(`Get refund status error: ${error.message}`);
-      throw new Error('Failed to get refund status');
+      if (!orderId || !refundId) throw new Error('orderId and refundId required');
+      const data = await this._get(`/orders/${orderId}/refunds/${refundId}`);
+      return data;
+    } catch (err) {
+      logger.error('Get refund status error', { orderId, refundId, message: err.message });
+      throw new Error(err.response?.data?.message || err.message || 'Failed to get refund status');
     }
   }
 
-  // Webhook signature verification
-  verifyWebhookSignature(payload, signature) {
-    try {
-      const generatedSignature = crypto
-        .createHmac('sha256', process.env.CASHFREE_WEBHOOK_SECRET || this.secret)
-        .update(payload)
-        .digest('base64');
-
-      return generatedSignature === signature;
-
-    } catch (error) {
-      logger.error(`Webhook signature verification error: ${error.message}`);
-      return false;
-    }
-  }
-
-  // Get order details
+  // Get order details (raw)
   async getOrderDetails(orderId) {
     try {
-      const response = await axios.get(
-        `${this.baseUrl}/orders/${orderId}`,
-        {
-          headers: this.headers,
-          timeout: 5000
-        }
-      );
-
-      return response.data;
-
-    } catch (error) {
-      logger.error(`Get order details error: ${error.message}`);
-      throw new Error('Failed to get order details');
+      if (!orderId) throw new Error('orderId required');
+      const data = await this._get(`/orders/${orderId}`);
+      return data.order || data;
+    } catch (err) {
+      logger.error('Get order details error', { orderId, message: err.message });
+      throw new Error(err.response?.data?.message || err.message || 'Failed to get order details');
     }
   }
 
-  // Create subscription (for recurring payments)
+  // Create subscription (recurring) - best-effort based on Cashfree API shape
   async createSubscription(subscriptionData) {
     try {
-      const response = await axios.post(
-        `${this.baseUrl}/subscriptions`,
-        {
-          subscription_id: subscriptionData.subscriptionId,
-          plan_id: subscriptionData.planId,
-          customer_details: subscriptionData.customerDetails,
-          subscription_note: 'SafeCheck recurring subscription',
-          auth_amount: subscriptionData.authAmount || 100, // Authorization amount in paise
-          expires_on: subscriptionData.expiresOn,
-          return_url: process.env.CASHFREE_RETURN_URL
-        },
-        {
-          headers: this.headers,
-          timeout: 10000
-        }
-      );
+      const payload = {
+        subscription_id: subscriptionData.subscriptionId,
+        plan_id: subscriptionData.planId,
+        customer_details: subscriptionData.customerDetails,
+        subscription_note: subscriptionData.subscriptionNote || 'SafeCheck recurring subscription',
+        auth_amount: subscriptionData.authAmount || 100, // in paise (example)
+        expires_on: subscriptionData.expiresOn,
+        return_url: process.env.CASHFREE_RETURN_URL,
+      };
 
-      return response.data;
+      const data = await this._post('/subscriptions', payload, { timeout: 20000 });
+      return data;
+    } catch (err) {
+      logger.error('Create subscription error', { message: err.message });
+      throw new Error(err.response?.data?.message || err.message || 'Failed to create subscription');
+    }
+  }
 
-    } catch (error) {
-      logger.error(`Create subscription error: ${error.message}`);
-      throw new Error('Failed to create subscription');
+  // Webhook signature verification (pass raw payload string and header signature)
+  verifyWebhookSignature(payloadString, signature) {
+    try {
+      const secret = process.env.CASHFREE_WEBHOOK_SECRET || this.secret || '';
+      const generatedSignature = crypto.createHmac('sha256', secret).update(payloadString).digest('base64');
+      return generatedSignature === signature;
+    } catch (err) {
+      logger.error('Webhook signature verify error', { message: err.message });
+      return false;
     }
   }
 }

@@ -1,100 +1,123 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+// src/context/AuthContext.jsx
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import toast from 'react-hot-toast';
-import api from '../services/api';
+import api from '../api/api';
 
-const AuthContext = createContext({});
-export const useAuth = () => useContext(AuthContext);
+const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
+  const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [subscription, setSubscription] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true); // true while we check local token
 
+  // Initialize from localStorage if token exists
   useEffect(() => {
     const token = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
 
-    // Wait until token & user are fully evaluated
-    if (token && savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
+    if (token) {
+      // attach token to api default headers so subsequent requests include it
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 
-        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-        setUser(parsedUser);
-        fetchUserProfile();
-      } catch {
-        logout(false);
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          setUser(parsed);
+        } catch {
+          // ignore parse error
+          localStorage.removeItem('user');
+        }
       }
-    }
 
-    // delay ensures no flashing
-    setTimeout(() => setLoading(false), 300);
+      // Refresh profile from server to ensure token is valid and data fresh
+      fetchUserProfile().finally(() => setLoading(false));
+    } else {
+      // no token -> not authenticated
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fetch profile + subscription from backend
   const fetchUserProfile = async () => {
     try {
       const res = await api.get('/auth/profile');
-      setUser(res.data.data.user);
-      setSubscription(res.data.data.subscription);
-      localStorage.setItem('user', JSON.stringify(res.data.data.user));
-    } catch {
+      if (res.data?.success) {
+        const { user: serverUser, subscription: serverSubscription } = res.data.data;
+        setUser(serverUser);
+        setSubscription(serverSubscription || null);
+        try {
+          localStorage.setItem('user', JSON.stringify(serverUser));
+        } catch {}
+        return { success: true, user: serverUser, subscription: serverSubscription };
+      } else {
+        // If backend returned success false, clear token
+        logout(false);
+        return { success: false };
+      }
+    } catch (err) {
+      // likely invalid token or network error -> force logout locally
       logout(false);
+      return { success: false, error: err.response?.data?.error || err.message };
     }
   };
 
-  const login = async (email, password) => {
+  // Login: posts to /auth/login, stores token & user on success
+  const login = async (email, password, { redirect = true } = {}) => {
     try {
       const res = await api.post('/auth/login', { email, password });
-      const { user, token, subscription } = res.data.data;
+      if (res.data?.success) {
+        const { token, user: userData, subscription: sub } = res.data.data;
+        // persist token & user
+        localStorage.setItem('token', token);
+        try { localStorage.setItem('user', JSON.stringify(userData)); } catch {}
+        // set default header for future requests
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        setUser(userData);
+        setSubscription(sub || null);
 
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-
-      setUser(user);
-      setSubscription(subscription);
-
-      toast.success('Login successful!');
-      navigate('/dashboard');
-      return { success: true };
+        if (redirect) navigate('/dashboard');
+        return { success: true, user: userData, subscription: sub || null };
+      }
+      return { success: false, error: res.data?.error || 'Login failed' };
     } catch (err) {
-      const message = err.response?.data?.error || 'Login failed';
-      toast.error(message);
-      return { success: false, error: message };
+      return { success: false, error: err.response?.data?.error || err.message };
     }
   };
 
-  const register = async (name, email, password) => {
+  // Register: posts to /auth/register, behaves similarly to login on success
+  const register = async (payload = {}, { redirect = true } = {}) => {
     try {
-      const res = await api.post('/auth/register', { name, email, password });
-      const { user, token, subscription } = res.data.data;
+      const res = await api.post('/auth/register', payload);
+      if (res.data?.success) {
+        const { token, user: userData, subscription: sub } = res.data.data;
+        localStorage.setItem('token', token);
+        try { localStorage.setItem('user', JSON.stringify(userData)); } catch {}
+        api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        setUser(userData);
+        setSubscription(sub || null);
 
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-
-      setUser(user);
-      setSubscription(subscription);
-
-      toast.success('Registration successful!');
-      navigate('/dashboard');
-      return { success: true };
+        if (redirect) navigate('/dashboard');
+        return { success: true, user: userData, subscription: sub || null };
+      }
+      return { success: false, error: res.data?.error || 'Registration failed' };
     } catch (err) {
-      const message = err.response?.data?.error || 'Registration failed';
-      toast.error(message);
-      return { success: false, error: message };
+      return { success: false, error: err.response?.data?.error || err.message };
     }
   };
 
+  // Logout: clear local storage + header + state. Optionally redirect.
   const logout = (redirect = true) => {
-    localStorage.clear();
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    } catch {}
     delete api.defaults.headers.common['Authorization'];
     setUser(null);
     setSubscription(null);
     if (redirect) {
-      toast.success('Logged out successfully');
+      // navigate to login page
       navigate('/login');
     }
   };
@@ -116,3 +139,5 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+
+export const useAuth = () => useContext(AuthContext);

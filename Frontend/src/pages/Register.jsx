@@ -1,3 +1,4 @@
+// src/pages/Register.jsx
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -11,68 +12,80 @@ const Register = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const { register } = useAuth();
   const navigate = useNavigate();
 
-  const validatePassword = (password) => {
-    const requirements = {
-      length: password.length >= 6,
-      uppercase: /[A-Z]/.test(password),
-      lowercase: /[a-z]/.test(password),
-      number: /[0-9]/.test(password),
-    };
-    return requirements;
-  };
+  const validatePassword = (pw) => ({
+    length: pw.length >= 6,
+    uppercase: /[A-Z]/.test(pw),
+    lowercase: /[a-z]/.test(pw),
+    number: /[0-9]/.test(pw),
+  });
+
+  const passwordRequirements = validatePassword(password);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+    setError('');
+
+    if (!name.trim()) {
+      setError('Please enter your full name.');
+      return;
+    }
+
     if (password !== confirmPassword) {
-      alert('Passwords do not match');
+      setError('Passwords do not match.');
       return;
     }
-    
-    const requirements = validatePassword(password);
-    if (!Object.values(requirements).every(req => req)) {
-      alert('Password does not meet requirements');
+
+    if (!Object.values(passwordRequirements).every(Boolean)) {
+      setError('Password does not meet requirements.');
       return;
     }
-    
+
     setLoading(true);
-    const result = await register(name, email, password);
-    
-    if (!result.success) {
+    try {
+      // call register and prevent its internal redirect so we control navigation
+      const result = await register({ name, email, password }, { redirect: false });
+
+      if (!result.success) {
+        setError(result.error || 'Registration failed. Try again.');
+        setLoading(false);
+        return;
+      }
+
+      // success -> navigate to dashboard
+      navigate('/dashboard');
+    } catch (err) {
+      setError(err?.message || 'An unexpected error occurred.');
       setLoading(false);
     }
   };
-
-  const passwordRequirements = validatePassword(password);
 
   return (
     <div className="min-h-[80vh] flex items-center justify-center py-12 px-4">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        transition={{ duration: 0.45 }}
         className="max-w-md w-full space-y-8"
       >
-        {/* Logo and Header */}
+        {/* Header */}
         <div className="text-center">
           <div className="flex justify-center mb-6">
             <img src="/logo.png" alt="SafeCheck" className="h-16 w-16" />
           </div>
           <h2 className="text-3xl font-bold">Create Your Account</h2>
-          <p className="mt-2 text-gray-600">
-            Join SafeCheck and start protecting yourself from scams
-          </p>
+          <p className="mt-2 text-gray-600">Join SafeCheck and start protecting yourself from scams</p>
         </div>
 
-        {/* Registration Form */}
-        <form onSubmit={handleSubmit} className="card space-y-6">
+        <form onSubmit={handleSubmit} className="card space-y-6" noValidate>
+          {error && <div className="text-red-600 text-sm">{error}</div>}
+
+          {/* Name */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Full Name
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <User className="h-5 w-5 text-gray-400" />
@@ -84,14 +97,14 @@ const Register = () => {
                 className="input-field pl-10"
                 placeholder="John Doe"
                 required
+                autoComplete="name"
               />
             </div>
           </div>
 
+          {/* Email */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Email Address
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Mail className="h-5 w-5 text-gray-400" />
@@ -103,14 +116,14 @@ const Register = () => {
                 className="input-field pl-10"
                 placeholder="you@example.com"
                 required
+                autoComplete="email"
               />
             </div>
           </div>
 
+          {/* Password */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Password
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Lock className="h-5 w-5 text-gray-400" />
@@ -122,61 +135,31 @@ const Register = () => {
                 className="input-field pl-10 pr-10"
                 placeholder="••••••••"
                 required
+                autoComplete="new-password"
+                aria-describedby="password-requirements"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
-                {showPassword ? (
-                  <EyeOff className="h-5 w-5 text-gray-400" />
-                ) : (
-                  <Eye className="h-5 w-5 text-gray-400" />
-                )}
+                {showPassword ? <EyeOff className="h-5 w-5 text-gray-400" /> : <Eye className="h-5 w-5 text-gray-400" />}
               </button>
             </div>
-            
+
             {/* Password Requirements */}
-            <div className="mt-3 space-y-2">
-              <div className="flex items-center space-x-2">
-                <CheckCircle 
-                  className={`h-4 w-4 ${passwordRequirements.length ? 'text-green-500' : 'text-gray-300'}`} 
-                />
-                <span className={`text-sm ${passwordRequirements.length ? 'text-gray-700' : 'text-gray-400'}`}>
-                  At least 6 characters
-                </span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <CheckCircle 
-                  className={`h-4 w-4 ${passwordRequirements.uppercase ? 'text-green-500' : 'text-gray-300'}`} 
-                />
-                <span className={`text-sm ${passwordRequirements.uppercase ? 'text-gray-700' : 'text-gray-400'}`}>
-                  One uppercase letter
-                </span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <CheckCircle 
-                  className={`h-4 w-4 ${passwordRequirements.lowercase ? 'text-green-500' : 'text-gray-300'}`} 
-                />
-                <span className={`text-sm ${passwordRequirements.lowercase ? 'text-gray-700' : 'text-gray-400'}`}>
-                  One lowercase letter
-                </span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <CheckCircle 
-                  className={`h-4 w-4 ${passwordRequirements.number ? 'text-green-500' : 'text-gray-300'}`} 
-                />
-                <span className={`text-sm ${passwordRequirements.number ? 'text-gray-700' : 'text-gray-400'}`}>
-                  One number
-                </span>
-              </div>
+            <div id="password-requirements" className="mt-3 space-y-2 text-sm">
+              <Requirement label="At least 6 characters" ok={passwordRequirements.length} />
+              <Requirement label="One uppercase letter" ok={passwordRequirements.uppercase} />
+              <Requirement label="One lowercase letter" ok={passwordRequirements.lowercase} />
+              <Requirement label="One number" ok={passwordRequirements.number} />
             </div>
           </div>
 
+          {/* Confirm Password */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Confirm Password
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Confirm Password</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Lock className="h-5 w-5 text-gray-400" />
@@ -185,13 +168,10 @@ const Register = () => {
                 type={showPassword ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className={`input-field pl-10 ${
-                  password && confirmPassword && password !== confirmPassword
-                    ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
-                    : ''
-                }`}
+                className={`input-field pl-10 ${password && confirmPassword && password !== confirmPassword ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
                 placeholder="••••••••"
                 required
+                autoComplete="new-password"
               />
             </div>
             {password && confirmPassword && password !== confirmPassword && (
@@ -199,30 +179,19 @@ const Register = () => {
             )}
           </div>
 
+          {/* Terms */}
           <div className="flex items-center">
-            <input
-              id="terms"
-              type="checkbox"
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              required
-            />
+            <input id="terms" type="checkbox" className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" required />
             <label htmlFor="terms" className="ml-2 block text-sm text-gray-700">
               I agree to the{' '}
-              <Link to="#" className="text-blue-600 hover:text-blue-500">
-                Terms of Service
-              </Link>{' '}
+              <Link to="#" className="text-blue-600 hover:text-blue-500">Terms of Service</Link>{' '}
               and{' '}
-              <Link to="#" className="text-blue-600 hover:text-blue-500">
-                Privacy Policy
-              </Link>
+              <Link to="#" className="text-blue-600 hover:text-blue-500">Privacy Policy</Link>
             </label>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full btn-primary flex items-center justify-center space-x-2"
-          >
+          {/* Submit */}
+          <button type="submit" disabled={loading} className="w-full btn-primary flex items-center justify-center space-x-2">
             {loading ? (
               <>
                 <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -239,9 +208,7 @@ const Register = () => {
           <div className="text-center">
             <p className="text-gray-600">
               Already have an account?{' '}
-              <Link to="/login" className="text-blue-600 hover:text-blue-500 font-medium">
-                Sign in
-              </Link>
+              <Link to="/login" className="text-blue-600 hover:text-blue-500 font-medium">Sign in</Link>
             </p>
           </div>
         </form>
@@ -274,5 +241,14 @@ const Register = () => {
     </div>
   );
 };
+
+function Requirement({ label, ok }) {
+  return (
+    <div className="flex items-center space-x-2">
+      <CheckCircle className={`h-4 w-4 ${ok ? 'text-green-500' : 'text-gray-300'}`} />
+      <span className={`text-sm ${ok ? 'text-gray-700' : 'text-gray-400'}`}>{label}</span>
+    </div>
+  );
+}
 
 export default Register;
