@@ -2,23 +2,46 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/logo.png" />
+
+    <!-- Favicon for browser tab -->
+    <link rel="icon" href="/favicon.png?v=2" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/favicon.png?v=2" />
+    <link rel="shortcut icon" href="/favicon.png?v=2" />
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="SafeCheck - AI-powered scam detection for text, URLs, job offers, and invoices" />
-    <meta name="keywords" content="scam detection, AI security, fraud prevention, OCR invoice" />
+    <meta
+      name="description"
+      content="SafeCheck - AI-powered scam detection for text, URLs, job offers, and invoices"
+    />
+    <meta
+      name="keywords"
+      content="scam detection, AI security, fraud prevention, OCR invoice"
+    />
     <title>SafeCheck - Scam Detection Platform</title>
 
-    <!-- Fonts (optional) -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
 
     <style>
       /* minimal fallback styles so page isn't completely blank while React mounts */
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body, #root { height: 100%; }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
       body {
-        font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+        font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
@@ -26,10 +49,11 @@
       }
     </style>
   </head>
+
   <body>
     <div id="root"></div>
 
-    <!-- IMPORTANT: point to your main entry where ReactDOM.createRoot is called -->
+    <!-- React Entry Point -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
