@@ -1,5 +1,5 @@
 // controllers/payment.controller.js
-const cashfreeService = require("../services/CashfreeService");
+const cashfreeService = require("../services/cashfree.service");
 const Subscription = require("../models/Subscription.model");
 const User = require("../models/User.model");
 const logger = require("../utils/logger");
